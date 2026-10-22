@@ -3,11 +3,12 @@
 
 #include <stdint.h>
 
-// Pin mappings on TTGO ESP32 LoRa OLED v1 module
+// DIO pin mappings come from the board configuration.
+#include "module.h"
 
-#define DIO0			GPIO_NUM_26
-#define DIO1			GPIO_NUM_33
-#define DIO2			GPIO_NUM_32
+#define DIO0			LORA_DIO0
+#define DIO1			LORA_DIO1
+#define DIO2			LORA_DIO2
 
 #define FXOSC			(32*MEGAHERTZ)
 
