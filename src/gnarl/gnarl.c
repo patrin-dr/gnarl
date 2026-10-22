@@ -23,6 +23,10 @@
 // Longest Medtronic packet; 71 bytes encode to 107 bytes with 4b6b.
 #define MAX_DECODED_PACKET_LEN	71
 
+// decode_4b6b() needs at least 2 encoded bytes (it computes len - 2
+// as a size_t, which underflows for shorter input).
+#define MIN_ENCODED_PACKET_LEN	2
+
 typedef enum {
 	ENCODING_NONE = 0,
 	ENCODING_4B6B = 2,
@@ -110,6 +114,8 @@ typedef struct __attribute__((packed)) {
 	uint16_t placeholder0;
 	uint16_t placeholder1;
 } statistics_cmd_t;
+
+// Running counters, kept in host byte order.
 static statistics_cmd_t statistics;
 
 static response_packet_t rx_buf;
@@ -144,10 +150,15 @@ static bool check_len(const char *name, int len, int min_len) {
 // 71-byte long packet encodes to 107 bytes.
 static uint8_t pkt_buf[MAX_PACKET_LEN];
 
-// Returns false (without transmitting) if the packet is too long.
+// Returns false (without transmitting) if the packet is empty or too long.
 static bool send(uint8_t *data, int len, int repeat_count, int delay_ms) {
 	if (len > 0 && data[len-1] == 0) {
 		len--;
+	}
+	if (len <= 0) {
+		// encode_4b6b() computes len - 1 as a size_t: never call it with 0.
+		ESP_LOGE(TAG, "send: empty packet");
+		return false;
 	}
 	switch (encoding_type) {
 	case ENCODING_NONE:
@@ -204,6 +215,13 @@ static void rx_common(int n, int rssi) {
 	case ENCODING_NONE:
 		break;
 	case ENCODING_4B6B:
+		// A packet this short cannot be valid 4b6b data (and would
+		// underflow inside decode_4b6b); pass it through undecoded,
+		// as for any other decoding failure.
+		if (n < MIN_ENCODED_PACKET_LEN) {
+			ESP_LOGD(TAG, "RX: %d-byte packet too short to decode", n);
+			break;
+		}
 		d = decode_4b6b(rx_buf.packet, pkt_buf, n);
 		if (d != -1) {
 			memcpy(rx_buf.packet, pkt_buf, d);
@@ -369,17 +387,22 @@ static void set_sw_encoding(const uint8_t *buf, int len) {
 }
 
 static void send_stats() {
-	statistics.uptime = xTaskGetTickCount();
+	// Build a big-endian copy; the running counters stay in host order.
+	statistics_cmd_t s = statistics;
+	s.uptime = xTaskGetTickCount();
 	// From rfm95:
-	statistics.packet_rx_count = rx_packet_count();
-	statistics.packet_tx_count = tx_packet_count();
+	s.packet_rx_count = rx_packet_count();
+	s.packet_tx_count = tx_packet_count();
 	ESP_LOGD(TAG, "send_stats len %d uptime %lu rx %d tx %d",
-		 sizeof(statistics), statistics.uptime,
-		 statistics.packet_rx_count, statistics.packet_tx_count);
-	reverse_four_bytes(&statistics.uptime);
-	reverse_two_bytes(&statistics.packet_rx_count);
-	reverse_two_bytes(&statistics.packet_tx_count);
-	send_bytes((const uint8_t *)&statistics, sizeof(statistics));
+		 sizeof(s), s.uptime, s.packet_rx_count, s.packet_tx_count);
+	reverse_four_bytes(&s.uptime);
+	reverse_two_bytes(&s.rx_overflow);
+	reverse_two_bytes(&s.rx_fifo_overflow);
+	reverse_two_bytes(&s.packet_rx_count);
+	reverse_two_bytes(&s.packet_tx_count);
+	reverse_two_bytes(&s.crc_failure_count);
+	reverse_two_bytes(&s.spi_sync_failure_count);
+	send_bytes((const uint8_t *)&s, sizeof(s));
 }
 
 // This is called from the ble task.
