@@ -18,16 +18,32 @@ cd project
 rm -fr CMakeLists.txt component.mk components dependencies include main Makefile partitions.csv sdkconfig
 if [ -d build ]; then
     # build directory will be owned by root if using docker
-    if [ $(stat --format=%U build) = root ]; then
-	sudo rm -fr build
-    else
+    if [ -O build ]; then
 	rm -fr build
+    else
+	sudo rm -fr build
     fi
 fi
 
 cp -a ../include .
 cp -a ../$src main
 mv main/sdkconfig .
+
+# Apply optional overrides: each CONFIG_FOO=value or "# CONFIG_FOO is not set"
+# line in sdkconfig.overrides replaces the corresponding line in sdkconfig.
+if [ -f main/sdkconfig.overrides ]; then
+    echo "Applying sdkconfig.overrides."
+    keys=$(sed -n -e 's/^\(CONFIG_[A-Za-z0-9_]*\)=.*/\1/p' \
+		  -e 's/^# \(CONFIG_[A-Za-z0-9_]*\) is not set.*/\1/p' main/sdkconfig.overrides)
+    for k in $keys; do
+	grep -v -e "^$k=" -e "^# $k is not set" sdkconfig > sdkconfig.tmp || true
+	mv sdkconfig.tmp sdkconfig
+    done
+    echo "" >> sdkconfig
+    echo "# Overrides from $src/sdkconfig.overrides" >> sdkconfig
+    grep -e '^CONFIG_' -e '^# CONFIG_' main/sdkconfig.overrides >> sdkconfig
+    rm main/sdkconfig.overrides
+fi
 
 sed "s/xyzzy/$project/" < ../mk/Makefile > Makefile
 sed "s/xyzzy/$project/" < ../mk/CMakeLists.project > CMakeLists.txt
