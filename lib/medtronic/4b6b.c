@@ -17,6 +17,10 @@ int encode_4b6b(const uint8_t *src, uint8_t *dst, size_t len)
 {
 	int i, n;
 
+	// len - 1 below is computed as a size_t: guard against underflow.
+	if (len == 0)
+		return 0;
+
 	// 2 input bytes produce 3 output bytes.
 	for (i = 0, n = 0; i < len - 1; i += 2, n += 3) {
 		uint8_t x = src[i], y = src[i + 1];
@@ -64,6 +68,11 @@ static const uint8_t decode_6b[64] = {
 int decode_4b6b(const uint8_t *src, uint8_t *dst, size_t len)
 {
 	int i, n;
+
+	// len - 2 below is computed as a size_t: guard against underflow.
+	// Fewer than 2 encoded bytes cannot hold a decoded byte anyway.
+	if (len < 2)
+		return -1;
 
 	// 3 input bytes produce 2 output bytes.
 	for (i = 0, n = 0; i < len - 2; i += 3, n += 2) {
