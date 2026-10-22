@@ -1,5 +1,41 @@
 # GNARL is Not A RileyLink
 
+## This fork: Heltec WiFi LoRa 32 V2 (868 MHz)
+
+Branch `heltec-v2` ports GNARL to the **Heltec WiFi LoRa 32 V2 / V2.1**
+(ESP32 + SX1276, 868 MHz) for a Medtronic MiniMed 722 WW pump with AndroidAPS.
+
+Changes compared to upstream:
+
+* **Board pins** in `include/module.h`: LED on GPIO25, OLED power via
+  Vext (GPIO21, active LOW), SX1276 DIO1/DIO2 on GPIO35/GPIO34
+  (TTGO v1 uses GPIO33/GPIO32). Set `HELTEC_V2_1` to match your board
+  revision (printed on the board: "V2" or "V2.1").
+* **Robustness**: no reboot after the phone disconnects, no `assert()`
+  crashes on BLE errors, length checks on all rfspy commands, error
+  replies instead of silence, watchdog reset while idle.
+* **Power**: dynamic CPU frequency (40-80 MHz), radio Sleep after
+  transmit-only commands, slower BLE advertising while disconnected.
+  Small `sdkconfig` changes live in `src/<project>/sdkconfig.overrides`.
+* **Battery**: voltage sensing, standard BLE Battery Service
+  (0x180F) for AndroidAPS, battery level on the OLED, deep sleep below
+  `BATTERY_CUTOFF_MV` to protect the cell. Calibrate with
+  `BATTERY_CALIBRATION_PCT` against a multimeter.
+* **Logging**: INFO by default; uncomment `GNARL_DEBUG` in
+  `src/gnarl/gnarl.h` for packet dumps.
+* **CI**: GitHub Actions builds GNARL and the test apps with ESP-IDF
+  v5.0.7 on every push; each run has a `gnarl-firmware` artifact that can
+  be flashed with `esptool` without installing ESP-IDF:
+
+      python3 -m esptool --chip esp32 -p <port> -b 460800 write_flash @flash_args
+
+  (run in the unpacked artifact directory).
+
+This is DIY software for an insulin pump. Test in open loop first, keep
+the pump's own alarms on, and always have a manual fallback.
+
+---
+
 ![TTGO LoRa OLED v1](images/ttgo.png)
 
 ## Warning
@@ -83,7 +119,7 @@ git submodule status --recursive
 
 ### Alternative: Use the ESP-IDF Docker image
 
-1. Run `docker pull espressif/idf:v5.0` to download the ESP-IDF image.
+1. Run `docker pull espressif/idf:v5.0.7` to download the ESP-IDF image.
 [See this page for additional information.](https://docs.espressif.com/projects/esp-idf/en/v5.0/esp32/api-guides/tools/idf-docker-image.html)
 
 ### Disable OLED support if necessary
@@ -99,16 +135,18 @@ OLED use is defined in `include/module.h` and must be commented out if no OLED i
 1. Change to the `project` subdirectory.
 
 1. If using Docker, start an interactive ESP-IDF container for the build by running
-`docker run -it --rm -v $PWD:/project -w /project --device /dev/ttyUSB0 espressif/idf:v5.0`
+`docker run -it --rm -v $PWD:/project -w /project --device /dev/ttyUSB0 espressif/idf:v5.0.7`
+(USB passthrough does not work with Docker on macOS: build in Docker, flash with `esptool`).
 
-1. Build the project by running `idf.py build`
+1. Build the project by running `idf.py build`.
+Do **not** run `idf.py set-target`: it regenerates `sdkconfig` and discards the project configuration.
 
 1. Flash the project to your ESP32 module by running `idf.py flash`
 
 ## Running GNARL
 
 Run [Loop](https://loopkit.github.io/loopdocs/) on your iPhone
-or run the [dev branch of AndroidAPS](https://github.com/MilosKozak/AndroidAPS) on your Android phone.
+or run [AndroidAPS](https://github.com/nightscout/AndroidAPS) on your Android phone.
 GNARL should show up when you scan for a RileyLink.
 
 GNARL will show messages on the OLED display when your phone
@@ -138,7 +176,8 @@ This repository contains a few applications ("projects" in ESP-IDF terminology) 
 
 * `pumpstat` displays the status of a Medtronic insulin pump when you press the button
 
-* `regtest` reads the RFM69 registers and prints them on the serial console
+* `regtest` reads the SX1276 (RFM95) registers and prints them on the serial console;
+  register `42` (RegVersion) should read `12`
 
 * `sleep` uses the ESP32 "lightweight sleep" mode and wakes up when a
   timer goes off or the button is pressed
@@ -150,7 +189,7 @@ This repository contains a few applications ("projects" in ESP-IDF terminology) 
 
 To build the `blink` application, for example:
 
-1. In the top level of this repository, type `make blink`
+1. In the top level of this repository, type `make clean && make blink`
 
 1. Change to the `project` directory
 
@@ -168,6 +207,8 @@ It should look like this:
 	#define PUMP_ID		"123456"	// pump serial number (note that this is a string constant)
 	#define PUMP_FREQUENCY	916500000	// pump frequency
 	#define MMTUNE_START	916300000	// starting frequency for mmtune scans
+
+For worldwide (WW) pumps use 868 MHz values, e.g. `868350000` and `868200000`.
 
 ### Network configuration
 
@@ -216,10 +257,16 @@ Papertrail logging information must be defined in `include/papertrail_config.h` 
 ### Time zone configuration
 
 The local time zone must be hard-coded in the `include/timezone_config.h` file.
-For example:
+This fork uses Moscow time (UTC+3, no daylight saving time):
 
-    #define TZ	"EST5EDT,M3.2.0,M11.1.0"
+    #define TZ	"MSK-3"
+
+Note that POSIX inverts the sign: `MSK-3` means three hours *ahead* of UTC.
+Other examples: `EST5EDT,M3.2.0,M11.1.0` (US Eastern), `CET-1CEST,M3.5.0,M10.5.0/3` (Central Europe).
 
 The time zone must be in one of the first two formats
 [specified here.](https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html)
-Unfortunately, the friendly "America/New_York" format is *not* supported.
+Unfortunately, the friendly "Europe/Moscow" format is *not* supported.
+
+Only the `nightscout` and `xdrip` helper applications use the time zone;
+GNARL itself does not (AndroidAPS manages the pump clock).
