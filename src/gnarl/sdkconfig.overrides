@@ -1,0 +1,7 @@
+# Settings applied on top of src/gnarl/sdkconfig by mk/make-project.sh.
+# Keep this file small: one line per changed option.
+
+# Power management: let the CPU drop from 80 MHz to 40 MHz (XTAL) when idle.
+# Light sleep is not enabled in code: with Bluetooth clocked from the main
+# crystal (no external 32 kHz crystal) it would be blocked anyway on ESP32.
+CONFIG_PM_ENABLE=y
