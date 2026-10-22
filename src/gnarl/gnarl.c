@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <esp_pm.h>
 #include <esp_timer.h>
 #include <esp_task_wdt.h>
 #include <freertos/FreeRTOS.h>
@@ -46,6 +47,28 @@ typedef struct {
 static QueueHandle_t request_queue;
 
 static TaskHandle_t gnarl_loop_handle = NULL;
+
+#ifdef CONFIG_PM_ENABLE
+// Held while a command is processed so the CPU runs at full speed
+// during radio operations; released while idle.
+static esp_pm_lock_handle_t radio_pm_lock;
+#endif
+
+static inline void radio_busy(void) {
+#ifdef CONFIG_PM_ENABLE
+	if (radio_pm_lock) {
+		esp_pm_lock_acquire(radio_pm_lock);
+	}
+#endif
+}
+
+static inline void radio_idle(void) {
+#ifdef CONFIG_PM_ENABLE
+	if (radio_pm_lock) {
+		esp_pm_lock_release(radio_pm_lock);
+	}
+#endif
+}
 
 typedef struct __attribute__((packed)) {
 	uint8_t listen_channel;
@@ -224,6 +247,8 @@ static void send_packet(const uint8_t *buf, int len) {
 		send_code(RESPONSE_CODE_PARAM_ERROR);
 		return;
 	}
+	// Nothing to receive: don't leave the radio in Standby.
+	rfm95_sleep();
 	send_code(RESPONSE_CODE_SUCCESS);
 }
 
@@ -255,6 +280,7 @@ static void send_and_listen(const uint8_t *buf, int len) {
 		n = receive(rx_buf.packet, sizeof(rx_buf.packet), p->timeout_ms);
 		rssi = read_rssi();
 	}
+	// receive() always leaves the radio in Sleep.
 	rx_common(n, rssi);
 }
 
@@ -414,6 +440,7 @@ static void gnarl_loop(void *unused) {
 		if (!xQueueReceive(request_queue, &req, pdMS_TO_TICKS(IDLE_WAIT_MS))) {
 			continue;
 		}
+		radio_busy();
 		switch (req.command) {
 		case CmdGetState:
 			ESP_LOGI(TAG, "CmdGetState");
@@ -465,12 +492,20 @@ static void gnarl_loop(void *unused) {
 			send_code(RESPONSE_CODE_UNKNOWN_COMMAND);
 			break;
 		}
+		radio_idle();
 		display_update(PHONE_RSSI, req.rssi);
 		display_update(COMMAND_TIME, esp_timer_get_time()/SECONDS);
 	}
 }
 
 void start_gnarl_task(void) {
+#ifdef CONFIG_PM_ENABLE
+	esp_err_t err = esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "gnarl_radio", &radio_pm_lock);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "esp_pm_lock_create: %s", esp_err_to_name(err));
+		radio_pm_lock = NULL;
+	}
+#endif
 	request_queue = xQueueCreate(QUEUE_LENGTH, sizeof(rfspy_request_t));
 	// Start radio task with high priority to avoid receiving truncated packets.
 	xTaskCreate(gnarl_loop, "gnarl", 4096, 0, tskIDLE_PRIORITY + 24, &gnarl_loop_handle);
