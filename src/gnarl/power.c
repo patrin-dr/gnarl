@@ -31,10 +31,15 @@
 // so that the higher resume threshold applies on wake-up.
 static RTC_DATA_ATTR bool low_battery_sleep;
 
-static void enter_low_battery_sleep(bool sleep_radio) {
-	if (sleep_radio) {
-		// Only safe when no radio command can be running (at boot).
+// at_boot: called from power_boot_check(), before Bluetooth is started
+// and while no radio command can be running.
+static void enter_low_battery_sleep(bool at_boot) {
+	if (at_boot) {
 		rfm95_sleep();
+	} else {
+		// ESP-IDF requires Bluetooth to be disabled before deep sleep.
+		// The radio is already in Sleep after every command.
+		ble_shutdown();
 	}
 #ifdef VEXT
 	// Turn off the OLED and the battery divider while asleep.
@@ -42,7 +47,10 @@ static void enter_low_battery_sleep(bool sleep_radio) {
 	gpio_hold_en(VEXT);
 	gpio_deep_sleep_hold_en();
 #endif
+	// Wake on PRG button (active low); keep the pin pulled up while asleep.
 	esp_sleep_enable_ext0_wakeup(BUTTON, 0);
+	rtc_gpio_pullup_en(BUTTON);
+	rtc_gpio_pulldown_dis(BUTTON);
 	esp_sleep_enable_timer_wakeup(RECHECK_SLEEP_US);
 	low_battery_sleep = true;
 	ESP_LOGW(TAG, "entering deep sleep to protect the battery");
@@ -91,7 +99,6 @@ static void power_monitor(void *unused) {
 				display_update(BATTERY_LOW, mv);
 				// Give the display time to show the warning.
 				vTaskDelay(pdMS_TO_TICKS(6000));
-				// The radio is left in Sleep after every command.
 				enter_low_battery_sleep(false);
 			}
 		} else {

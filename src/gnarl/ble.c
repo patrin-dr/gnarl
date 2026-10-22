@@ -547,7 +547,23 @@ static int no_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt
 }
 
 static void host_task(void *arg) {
+	// Returns only after nimble_port_stop().
 	nimble_port_run();
+	// A FreeRTOS task must never return from its function.
+	nimble_port_freertos_deinit();
+}
+
+void ble_shutdown(void) {
+	// Stop notifications from other tasks before tearing down the stack.
+	connected = false;
+	connection_handle = BLE_HS_CONN_HANDLE_NONE;
+	int rc = nimble_port_stop();
+	if (rc != 0) {
+		ESP_LOGW(TAG, "nimble_port_stop: %d", rc);
+		return;
+	}
+	nimble_port_deinit();
+	ESP_LOGI(TAG, "Bluetooth stopped");
 }
 
 void gnarl_init(void) {

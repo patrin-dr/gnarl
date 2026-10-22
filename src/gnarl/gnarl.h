@@ -40,6 +40,9 @@ void print_bytes(const char* msg, const uint8_t *buf, int count);
 // Update the BLE Battery Service level (0-100) and notify subscribers.
 void ble_battery_update(uint8_t percent);
 
+// Stop the Bluetooth host and controller (before deep sleep).
+void ble_shutdown(void);
+
 // Low-battery check at boot: returns only if the battery is good enough
 // to run (or sensing is unavailable); otherwise enters deep sleep.
 void power_boot_check(void);
