@@ -32,10 +32,13 @@ void app_main(void) {
 	ESP_LOGI(TAG, "%s", SUBG_RFSPY_VERSION);
 	power_init();
 	rfm95_init();
+	// May not return: deep sleep if the battery is too low to run.
+	power_boot_check();
 	uint8_t v = read_version();
 	ESP_LOGD(TAG, "radio version %d.%d", version_major(v), version_minor(v));
 	set_frequency(PUMP_FREQUENCY);
 	ESP_LOGD(TAG, "frequency set to %lu Hz", read_frequency());
 	display_init();
 	gnarl_init();
+	start_power_monitor();
 }

@@ -1,5 +1,6 @@
 #include "gnarl.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -9,6 +10,7 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 
+#include "battery.h"
 #include "display.h"
 #include "module.h"
 #include "oled.h"
@@ -26,6 +28,7 @@ static int connected = false;
 static int phone_rssi;
 static int pump_rssi;
 static int command_time;  // seconds
+static int battery_mv = -1;
 
 #define DISPLAY_TIMEOUT	5  // seconds
 
@@ -46,6 +49,30 @@ static void format_time_ago(char *buf) {
 	sprintf(buf, "%dh%dm", hr, min);
 }
 
+static void format_battery(char *buf, int mv) {
+	if (mv < 0) {
+		strcpy(buf, "--");
+		return;
+	}
+	sprintf(buf, "%d%% %d.%02dV", battery_percent(mv), mv / 1000, (mv % 1000) / 10);
+}
+
+static void show_battery_low(int mv) {
+	char buf[20];
+	oled_on();
+	oled_clear();
+	oled_font_medium();
+	oled_align_center();
+	oled_draw_string(64, 24, "Battery low");
+	oled_font_small();
+	oled_draw_string(64, 42, "Turning off");
+	format_battery(buf, mv);
+	oled_draw_string(64, 58, buf);
+	oled_update();
+	usleep(DISPLAY_TIMEOUT*SECONDS);
+	oled_off();
+}
+
 static void update(display_command_t cmd) {
 	switch (cmd.op) {
 	case PHONE_RSSI:
@@ -60,6 +87,13 @@ static void update(display_command_t cmd) {
 		command_time = cmd.arg;
 		ESP_LOGD(TAG, "command time = %d", command_time);
 		return;
+	case BATTERY:
+		battery_mv = cmd.arg;
+		ESP_LOGD(TAG, "battery = %d mV", battery_mv);
+		return;
+	case BATTERY_LOW:
+		show_battery_low(cmd.arg);
+		return;
 	case CONNECTED:
 		connected = cmd.arg;
 		break;
@@ -70,30 +104,33 @@ static void update(display_command_t cmd) {
 	oled_clear();
 
 	oled_font_medium();
-        oled_align_center();
-        oled_draw_string(64, 15, connected ? "Connected" : "Disconnected");
+	oled_align_center();
+	oled_draw_string(64, 13, connected ? "Connected" : "Disconnected");
 
 	oled_font_small();
 	oled_align_left();
-        oled_draw_string(5, 32, "Last command:");
-        oled_draw_string(5, 46, "Phone RSSI:");
-        oled_draw_string(5, 60, "Pump  RSSI:");
+	oled_draw_string(5, 26, "Last command:");
+	oled_draw_string(5, 38, "Phone RSSI:");
+	oled_draw_string(5, 50, "Pump  RSSI:");
+	oled_draw_string(5, 62, "Battery:");
 
 	oled_align_right();
-	char buf[16];
+	char buf[20];
 	format_time_ago(buf);
-	oled_draw_string(122, 32, buf);
+	oled_draw_string(122, 26, buf);
 	if (connected) {
 		sprintf(buf, "%d", phone_rssi);
-		oled_draw_string(122, 46, buf);
+		oled_draw_string(122, 38, buf);
 		sprintf(buf, "%d", pump_rssi);
-		oled_draw_string(122, 60, buf);
+		oled_draw_string(122, 50, buf);
 	} else {
-		oled_draw_string(122, 46, "--");
-		oled_draw_string(122, 60, "--");
+		oled_draw_string(122, 38, "--");
+		oled_draw_string(122, 50, "--");
 	}
+	format_battery(buf, battery_mv);
+	oled_draw_string(122, 62, buf);
 
-        oled_update();
+	oled_update();
 	usleep(DISPLAY_TIMEOUT*SECONDS);
 	oled_off();
 }
