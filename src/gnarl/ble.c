@@ -1,5 +1,6 @@
 #include "gnarl.h"
 
+#include <stdbool.h>
 #include <unistd.h>
 
 #include <esp_nimble_hci.h>
@@ -58,15 +59,15 @@ static ble_gatt_access_fn led_mode_access;
 static ble_gatt_access_fn firmware_version_access;
 static ble_gatt_access_fn no_access;
 
-static bool connected;
-static uint16_t connection_handle;
+static volatile bool connected;
+static volatile uint16_t connection_handle = BLE_HS_CONN_HANDLE_NONE;
 
 static uint16_t response_count_notify_handle;
-static int response_count_notify_state;
+static volatile int response_count_notify_state;
 static uint8_t response_count;
 
 static uint16_t timer_tick_notify_handle;
-static int timer_tick_notify_state;
+static volatile int timer_tick_notify_state;
 static uint8_t timer_tick;
 static void timer_tick_callback(void *);
 
@@ -149,7 +150,8 @@ static void advertise(void) {
 	fields.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
 
 	const char *name = ble_svc_gap_device_name();
-	strncpy(short_name, name, sizeof(short_name));
+	strncpy(short_name, name, sizeof(short_name) - 1);
+	short_name[sizeof(short_name) - 1] = 0;
 	fields.name = (uint8_t *)short_name;
 	fields.name_len = strlen(short_name);
 	if (strlen(name) <= 5) {
@@ -193,7 +195,9 @@ static void advertise(void) {
 	adv.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
 	err = ble_gap_adv_start(addr_type, 0, BLE_HS_FOREVER, &adv, handle_gap_event, 0);
-	assert(!err);
+	if (err && err != BLE_HS_EALREADY) {
+		ESP_LOGE(TAG, "ble_gap_adv_start err %d", err);
+	}
 
 	ESP_LOGD(TAG, "advertising started");
 }
@@ -206,18 +210,22 @@ static int handle_gap_event(struct ble_gap_event *e, void *arg) {
 			advertise();
 			return 0;
 		}
+		connection_handle = e->connect.conn_handle;
 		connected = true;
 		display_update(CONNECTED, true);
-		connection_handle = e->connect.conn_handle;
 		ESP_LOGI(TAG, "connected");
 		ESP_LOGD(TAG, "connection handle %04X", connection_handle);
 		ESP_LOGD(TAG, "response count notify handle %04X", response_count_notify_handle);
 		ESP_LOGD(TAG, "timer tick notify handle %04X", timer_tick_notify_handle);
 		break;
 	case BLE_GAP_EVENT_DISCONNECT:
+		// Forget subscriptions: they belong to the old connection.
 		connected = false;
+		response_count_notify_state = 0;
+		timer_tick_notify_state = 0;
+		connection_handle = BLE_HS_CONN_HANDLE_NONE;
 		display_update(CONNECTED, false);
-		ESP_LOGD(TAG, "disconnected");
+		ESP_LOGI(TAG, "disconnected, reason %d", e->disconnect.reason);
 		advertise();
 		break;
 	case BLE_GAP_EVENT_ADV_COMPLETE:
@@ -271,16 +279,30 @@ static uint16_t data_in_len;
 static uint8_t data_out[MAX_DATA];
 static uint16_t data_out_len;
 
-static void response_notify(void) {
-	response_count++;
-	if (!response_count_notify_state) {
-		ESP_LOGD(TAG, "not notifying for response count %d", response_count);
+// Send a notification on the current connection.
+// Failures (e.g. the phone just disconnected) are logged, never fatal.
+static void notify(uint16_t attr_handle, int subscribed, const uint8_t *value, int len, const char *what) {
+	if (!connected || !subscribed || connection_handle == BLE_HS_CONN_HANDLE_NONE) {
+		ESP_LOGD(TAG, "not notifying for %s", what);
 		return;
 	}
-	struct os_mbuf *om = ble_hs_mbuf_from_flat(&response_count, sizeof(response_count));
-	int err = ble_gattc_notify_custom(connection_handle, response_count_notify_handle, om);
-	assert(!err);
-	ESP_LOGD(TAG, "notify for response count %d", response_count);
+	struct os_mbuf *om = ble_hs_mbuf_from_flat(value, len);
+	if (om == NULL) {
+		ESP_LOGE(TAG, "notify %s: out of mbufs", what);
+		return;
+	}
+	int err = ble_gattc_notify_custom(connection_handle, attr_handle, om);
+	if (err) {
+		ESP_LOGW(TAG, "notify %s failed: err %d", what, err);
+		return;
+	}
+	ESP_LOGD(TAG, "notify for %s", what);
+}
+
+static void response_notify(void) {
+	response_count++;
+	notify(response_count_notify_handle, response_count_notify_state,
+	       &response_count, sizeof(response_count), "response count");
 }
 
 void send_code(const uint8_t code) {
@@ -291,6 +313,10 @@ void send_code(const uint8_t code) {
 }
 
 void send_bytes(const uint8_t *buf, int count) {
+	if (count > MAX_DATA - 1) {
+		ESP_LOGE(TAG, "send_bytes: %d bytes is too long", count);
+		count = MAX_DATA - 1;
+	}
 	print_bytes("send_bytes (%d):", buf, count);
 	data_out[0] = RESPONSE_CODE_SUCCESS;
 	memcpy(data_out + 1, buf, count);
@@ -312,22 +338,13 @@ void print_bytes(const char *msg, const uint8_t *buf, int count) {
 static void timer_tick_callback(void *arg) {
 	timer_tick++;
 	ESP_LOGD(TAG, "timer tick %d", timer_tick);
-	if (!timer_tick_notify_state) {
-		if (connected) {
-			ESP_LOGD(TAG, "not notifying for timer tick");
-		}
-		return;
-	}
-	struct os_mbuf *om = ble_hs_mbuf_from_flat(&timer_tick, sizeof(timer_tick));
-	int err = ble_gattc_notify_custom(connection_handle, timer_tick_notify_handle, om);
-	assert(!err);
-	ESP_LOGD(TAG, "notify for timer tick");
+	notify(timer_tick_notify_handle, timer_tick_notify_state,
+	       &timer_tick, sizeof(timer_tick), "timer tick");
 }
 
 static int data_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
 	int err;
-	int8_t rssi;
-	assert(ble_uuid_cmp(ctxt->chr->uuid, &data_uuid.u) == 0);
+	int8_t rssi = 0;
 	switch (ctxt->op) {
 	case BLE_GATT_ACCESS_OP_READ_CHR:
 		print_bytes("data_access: sending %d bytes:", data_out, data_out_len);
@@ -337,19 +354,22 @@ static int data_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_ga
 		return 0;
 	case BLE_GATT_ACCESS_OP_WRITE_CHR:
 		err = ble_hs_mbuf_to_flat(ctxt->om, data_in, sizeof(data_in), &data_in_len);
-		assert(!err);
+		if (err) {
+			ESP_LOGE(TAG, "data_access: write too long (err %d)", err);
+			return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+		}
 		print_bytes("data_access: received %d bytes:", data_in, data_in_len);
 		ble_gap_conn_rssi(conn_handle, &rssi);
 		rfspy_command(data_in, data_in_len, (int)rssi);
 		return 0;
 	default:
-		assert(0);
+		return BLE_ATT_ERR_UNLIKELY;
 	}
-	return 0;
 }
 
 static void read_custom_name(void) {
 	ESP_LOGD(TAG, "read_custom_name from nvs");
+	strcpy((char *)custom_name, DEFAULT_NAME);
 	nvs_handle my_handle;
 	esp_err_t err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_handle);
 	if (err != ESP_OK) {
@@ -362,10 +382,13 @@ static void read_custom_name(void) {
 		strcpy((char *)custom_name, DEFAULT_NAME);
 		ESP_LOGD(TAG, "set default custom name: %s", custom_name);
 	} else if (err != ESP_OK) {
+		strcpy((char *)custom_name, DEFAULT_NAME);
 		ESP_LOGE(TAG, "read_custom_name: nvs_get_blob: %s", esp_err_to_name(err));
 	} else {
 		ESP_LOGD(TAG, "read_custom_name success: %s", custom_name);
 	}
+	// Guarantee termination even if the stored blob is corrupt.
+	custom_name[CUSTOM_NAME_SIZE - 1] = 0;
 	nvs_close(my_handle);
 }
 
@@ -392,34 +415,40 @@ static void write_custom_name(void) {
 
 static int custom_name_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
 	int err;
-	uint16_t custom_name_len = strlen((char *)custom_name);
-	assert(custom_name_len <= sizeof(custom_name));
-	assert(ble_uuid_cmp(ctxt->chr->uuid, &custom_name_uuid.u) == 0);
+	uint8_t new_name[CUSTOM_NAME_SIZE];
+	uint16_t len;
 	switch (ctxt->op) {
 	case BLE_GATT_ACCESS_OP_READ_CHR:
-		print_bytes("custom_name_access: sending %d bytes:", custom_name, custom_name_len);
-		if (os_mbuf_append(ctxt->om, custom_name, custom_name_len) != 0) {
+		len = strlen((char *)custom_name);
+		print_bytes("custom_name_access: sending %d bytes:", custom_name, len);
+		if (os_mbuf_append(ctxt->om, custom_name, len) != 0) {
 			return BLE_ATT_ERR_INSUFFICIENT_RES;
 		}
 		return 0;
 	case BLE_GATT_ACCESS_OP_WRITE_CHR:
-		err = ble_hs_mbuf_to_flat(ctxt->om, custom_name, sizeof(custom_name), &custom_name_len);
-		custom_name[custom_name_len] = 0;
-		print_bytes("custom_name_access: received %d bytes:", custom_name, custom_name_len);
-		ESP_LOGD(TAG, "New custom name: %s", custom_name);
-		assert(!err);
+		// Leave room for the terminating zero byte.
+		err = ble_hs_mbuf_to_flat(ctxt->om, new_name, sizeof(new_name) - 1, &len);
+		if (err || len == 0) {
+			ESP_LOGE(TAG, "custom_name_access: invalid name length (err %d)", err);
+			return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+		}
+		new_name[len] = 0;
+		memset(custom_name, 0, sizeof(custom_name));
+		memcpy(custom_name, new_name, len + 1);
+		print_bytes("custom_name_access: received %d bytes:", custom_name, len);
+		ESP_LOGI(TAG, "new custom name: %s", custom_name);
 		write_custom_name();
 		esp_restart();
 		return 0;
 	default:
-		assert(0);
+		return BLE_ATT_ERR_UNLIKELY;
 	}
-	return 0;
 }
 
 static int firmware_version_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
-	assert(ble_uuid_cmp(ctxt->chr->uuid, &firmware_version_uuid.u) == 0);
-	assert(ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR);
+	if (ctxt->op != BLE_GATT_ACCESS_OP_READ_CHR) {
+		return BLE_ATT_ERR_UNLIKELY;
+	}
 	ESP_LOGD(TAG, "BLE firmware version = %s", BLE_RFSPY_VERSION);
 	if (os_mbuf_append(ctxt->om, (const uint8_t *)BLE_RFSPY_VERSION, strlen(BLE_RFSPY_VERSION)) != 0) {
 		return BLE_ATT_ERR_INSUFFICIENT_RES;
@@ -432,7 +461,6 @@ static uint8_t led_mode;
 static int led_mode_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
 	int err;
 	uint16_t n;
-	assert(ble_uuid_cmp(ctxt->chr->uuid, &led_mode_uuid.u) == 0);
 	switch (ctxt->op) {
 	case BLE_GATT_ACCESS_OP_READ_CHR:
 		ESP_LOGD(TAG, "led_mode_access: mode = %d", led_mode);
@@ -442,13 +470,14 @@ static int led_mode_access(uint16_t conn_handle, uint16_t attr_handle, struct bl
 		return 0;
 	case BLE_GATT_ACCESS_OP_WRITE_CHR:
 		err = ble_hs_mbuf_to_flat(ctxt->om, &led_mode, sizeof(led_mode), &n);
-		assert(!err);
+		if (err) {
+			return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+		}
 		ESP_LOGD(TAG, "led_mode_access: set mode = %d", led_mode);
 		return 0;
 	default:
-		assert(0);
+		return BLE_ATT_ERR_UNLIKELY;
 	}
-	return 0;
 }
 
 static int no_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
