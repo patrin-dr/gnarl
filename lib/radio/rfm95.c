@@ -19,6 +19,12 @@
 // written in two bursts, but be large enough to avoid fifo underflow.
 #define FIFO_THRESHOLD	20
 
+#ifdef LORA_TX_PA_BOOST
+#if LORA_TX_POWER_DBM < 2 || LORA_TX_POWER_DBM > 17
+#error "LORA_TX_POWER_DBM must be between 2 and 17 dBm for PA_BOOST"
+#endif
+#endif
+
 static inline uint8_t read_mode(void) {
 	return read_register(REG_OP_MODE) & OP_MODE_MASK;
 }
@@ -68,6 +74,21 @@ void rfm95_sleep(void) {
 
 static inline void sequencer_stop(void) {
 	write_register(REG_SEQ_CONFIG_1, SEQUENCER_STOP);
+}
+
+// Select the transmit amplifier output and power (see module.h).
+static void configure_tx_power(void) {
+#ifdef LORA_TX_PA_BOOST
+	// PA_BOOST: Pout = 2 + OutputPower dBm (OutputPower 0..15).
+	write_register(REG_PA_CONFIG, PA_SELECT_BOOST | (7 << PA_MAX_POWER_SHIFT) |
+		       ((LORA_TX_POWER_DBM - 2) & PA_OUTPUT_POWER_MASK));
+	ESP_LOGI(TAG, "TX via PA_BOOST at %d dBm (RegPaConfig %02X)",
+		 LORA_TX_POWER_DBM, read_register(REG_PA_CONFIG));
+#else
+	// Leave the chip default: RFO output, as upstream GNARL did.
+	ESP_LOGI(TAG, "TX via RFO (chip default, RegPaConfig %02X)",
+		 read_register(REG_PA_CONFIG));
+#endif
 }
 
 // Reset the radio device.  See section 7.2.2 of data sheet.
@@ -135,6 +156,8 @@ void rfm95_init(void) {
 	write_register(REG_PACKET_CONFIG_1, PACKET_FORMAT_FIXED);
 	write_register(REG_PAYLOAD_LENGTH, 0);
 	write_register(REG_PACKET_CONFIG_2, PACKET_MODE | 0);
+
+	configure_tx_power();
 }
 
 static inline bool fifo_empty(void) {

@@ -21,6 +21,7 @@
 #define REG_FRF_MSB		0x06
 #define REG_FRF_MID		0x07
 #define REG_FRF_LSB		0x08
+#define REG_PA_CONFIG		0x09
 #define REG_LNA			0x0C
 #define REG_RX_CONFIG		0x0D
 #define REG_RSSI_CONFIG		0x0E
@@ -61,6 +62,11 @@
 #define MODE_TX			3
 #define MODE_FSRX		4
 #define MODE_RX			5
+
+// REG_PA_CONFIG
+#define PA_SELECT_BOOST		(1 << 7)
+#define PA_MAX_POWER_SHIFT	4
+#define PA_OUTPUT_POWER_MASK	0x0F
 
 // REG_LNA
 #define LNA_GAIN_MAX		(1 << 5)

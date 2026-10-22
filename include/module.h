@@ -37,6 +37,19 @@
 #define LORA_DIO1	GPIO_NUM_35
 #define LORA_DIO2	GPIO_NUM_34
 
+// SX1276 transmit amplifier.
+// The chip has two outputs: RFO (chip default, up to +14 dBm) and PA_BOOST
+// (+2..+17 dBm). RFM95 modules, and most Heltec/TTGO boards, connect only
+// PA_BOOST to the antenna, so transmitting through RFO leaves only leakage.
+// Upstream GNARL never selected an output, i.e. it used RFO.
+// Comment out LORA_TX_PA_BOOST to get the upstream behaviour back
+// (useful to compare range with mmtune / pumpstat).
+#define LORA_TX_PA_BOOST
+// Output power on PA_BOOST in dBm, 2..17.
+// 10 dBm = maximum of the CC1110 in a real RileyLink.
+// 14 dBm (25 mW) is the limit for the 868 MHz short-range-device band.
+#define LORA_TX_POWER_DBM	10
+
 // Battery voltage sensing: 220k/100k divider switched on by Vext (LOW).
 // V2.1: GPIO37 = ADC1 channel 1.  V2.0: GPIO13 = ADC2 channel 4.
 // Comment out BATTERY_ADC_UNIT to disable battery sensing entirely.
