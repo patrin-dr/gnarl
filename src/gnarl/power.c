@@ -3,6 +3,7 @@
 #include <stdbool.h>
 
 #include <driver/gpio.h>
+#include <driver/rtc_io.h>
 #include <esp_attr.h>
 #include <esp_sleep.h>
 #include <freertos/FreeRTOS.h>
@@ -49,6 +50,9 @@ static void enter_low_battery_sleep(bool sleep_radio) {
 }
 
 void power_boot_check(void) {
+	// ext0 wake-up leaves the button pin routed to the RTC subsystem;
+	// return it to the digital GPIO matrix so its interrupt works again.
+	rtc_gpio_deinit(BUTTON);
 #ifdef VEXT
 	// Release the hold applied before a low-battery deep sleep.
 	gpio_hold_dis(VEXT);
