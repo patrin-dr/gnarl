@@ -5,11 +5,16 @@
 // SPI, RESET, DIO0 and OLED wiring is identical to TTGO ESP32 LoRa OLED v1;
 // DIO1 and DIO2 are NOT (see below).
 
+// Board revision. The revision is printed on the board ("V2" or "V2.1").
+// V2.1 moved battery sensing from GPIO13 to GPIO37.
+// Comment out for a V2.0 board.
+#define HELTEC_V2_1
+
 #define BUTTON		GPIO_NUM_0
 #define LED		GPIO_NUM_25	// TTGO v1: GPIO_NUM_2
 
-// Vext powers the OLED on Heltec boards: LOW = on, HIGH = off.
-// Comment out for TTGO v1.
+// Vext powers the OLED and enables the battery voltage divider on Heltec
+// boards: LOW = on, HIGH = off. Comment out for TTGO v1.
 #define VEXT		GPIO_NUM_21
 
 #define OLED_SDA	GPIO_NUM_4
@@ -31,6 +36,30 @@
 #define LORA_DIO0	GPIO_NUM_26
 #define LORA_DIO1	GPIO_NUM_35
 #define LORA_DIO2	GPIO_NUM_34
+
+// Battery voltage sensing: 220k/100k divider switched on by Vext (LOW).
+// V2.1: GPIO37 = ADC1 channel 1.  V2.0: GPIO13 = ADC2 channel 4.
+// Comment out BATTERY_ADC_UNIT to disable battery sensing entirely.
+#ifdef HELTEC_V2_1
+#define BATTERY_ADC_UNIT	ADC_UNIT_1
+#define BATTERY_ADC_CHANNEL	ADC_CHANNEL_1
+#else
+#define BATTERY_ADC_UNIT	ADC_UNIT_2
+#define BATTERY_ADC_CHANNEL	ADC_CHANNEL_4
+#endif
+#define BATTERY_ADC_ATTEN	ADC_ATTEN_DB_6	// ~150-1750 mV at the ADC pin
+#define BATTERY_DIVIDER_X100	320		// (220k + 100k) / 100k = 3.20
+// Multiply readings by this percentage to correct for divider tolerance;
+// calibrate against a multimeter: actual mV / reported mV * 100.
+#define BATTERY_CALIBRATION_PCT	100
+
+// Low-battery protection: the board itself has no over-discharge cutoff.
+// Below BATTERY_CUTOFF_MV (under load) the bridge goes into deep sleep;
+// it wakes on the PRG button or every 30 minutes and resumes only above
+// BATTERY_RESUME_MV. Comment out to disable.
+#define BATTERY_CUTOFF_ENABLE
+#define BATTERY_CUTOFF_MV	3300
+#define BATTERY_RESUME_MV	3450
 
 // Comment out the following line for a module without OLED
 #define OLED_ENABLE
