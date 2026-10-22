@@ -23,6 +23,10 @@
 #define CUSTOM_NAME_SIZE	30
 #define STORAGE_NAMESPACE	"GNARL"
 
+// Advertising interval while disconnected, in units of 0.625 ms.
+#define ADV_ITVL_MIN		240	// 150 ms
+#define ADV_ITVL_MAX		400	// 250 ms
+
 static uint8_t custom_name[CUSTOM_NAME_SIZE];
 
 void ble_store_ram_init(void);
@@ -193,6 +197,8 @@ static void advertise(void) {
 	memset(&adv, 0, sizeof(adv));
 	adv.conn_mode = BLE_GAP_CONN_MODE_UND;
 	adv.disc_mode = BLE_GAP_DISC_MODE_GEN;
+	adv.itvl_min = ADV_ITVL_MIN;
+	adv.itvl_max = ADV_ITVL_MAX;
 
 	err = ble_gap_adv_start(addr_type, 0, BLE_HS_FOREVER, &adv, handle_gap_event, 0);
 	if (err && err != BLE_HS_EALREADY) {
