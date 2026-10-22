@@ -55,12 +55,17 @@ static ble_uuid128_t custom_name_uuid      = UUID128_CONST(0xd93b2af0, 0x1e28, 0
 static ble_uuid128_t firmware_version_uuid = UUID128_CONST(0x30d99dc9, 0x7c91, 0x4295, 0xa051, 0x0a104d238cf2);
 static ble_uuid128_t led_mode_uuid         = UUID128_CONST(0xc6d84241, 0xf1a7, 0x4f9c, 0xa25f, 0xfce16732f14e);
 
+// Standard Bluetooth SIG Battery Service and Battery Level characteristic.
+static ble_uuid16_t battery_service_uuid   = BLE_UUID16_INIT(0x180F);
+static ble_uuid16_t battery_level_uuid     = BLE_UUID16_INIT(0x2A19);
+
 static ble_gap_event_fn handle_gap_event;
 static uint8_t addr_type;
 static ble_gatt_access_fn data_access;
 static ble_gatt_access_fn custom_name_access;
 static ble_gatt_access_fn led_mode_access;
 static ble_gatt_access_fn firmware_version_access;
+static ble_gatt_access_fn battery_level_access;
 static ble_gatt_access_fn no_access;
 
 static volatile bool connected;
@@ -74,6 +79,10 @@ static uint16_t timer_tick_notify_handle;
 static volatile int timer_tick_notify_state;
 static uint8_t timer_tick;
 static void timer_tick_callback(void *);
+
+static uint16_t battery_level_handle;
+static volatile int battery_level_notify_state;
+static volatile uint8_t battery_level = 100;
 
 static const struct ble_gatt_svc_def service_list[] = {
 	{
@@ -115,6 +124,19 @@ static const struct ble_gatt_svc_def service_list[] = {
 			{}, // End of characteristic list.
 		},
         },
+	{
+		.type = BLE_GATT_SVC_TYPE_PRIMARY,
+		.uuid = &battery_service_uuid.u,
+		.characteristics = (struct ble_gatt_chr_def[]){
+			{
+				.uuid = &battery_level_uuid.u,
+				.access_cb = battery_level_access,
+				.val_handle = &battery_level_handle,
+				.flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+			},
+			{}, // End of characteristic list.
+		},
+	},
 	{}, // End of service list.
 };
 
@@ -229,6 +251,7 @@ static int handle_gap_event(struct ble_gap_event *e, void *arg) {
 		connected = false;
 		response_count_notify_state = 0;
 		timer_tick_notify_state = 0;
+		battery_level_notify_state = 0;
 		connection_handle = BLE_HS_CONN_HANDLE_NONE;
 		display_update(CONNECTED, false);
 		ESP_LOGI(TAG, "disconnected, reason %d", e->disconnect.reason);
@@ -247,6 +270,11 @@ static int handle_gap_event(struct ble_gap_event *e, void *arg) {
 		if (e->subscribe.attr_handle == timer_tick_notify_handle) {
 			ESP_LOGD(TAG, "notify %d for timer tick", e->subscribe.cur_notify);
 			timer_tick_notify_state = e->subscribe.cur_notify;
+			break;
+		}
+		if (e->subscribe.attr_handle == battery_level_handle) {
+			ESP_LOGD(TAG, "notify %d for battery level", e->subscribe.cur_notify);
+			battery_level_notify_state = e->subscribe.cur_notify;
 			break;
 		}
 		ESP_LOGD(TAG, "notify %d for unknown handle %04X", e->subscribe.cur_notify, e->subscribe.attr_handle);
@@ -346,6 +374,31 @@ static void timer_tick_callback(void *arg) {
 	ESP_LOGD(TAG, "timer tick %d", timer_tick);
 	notify(timer_tick_notify_handle, timer_tick_notify_state,
 	       &timer_tick, sizeof(timer_tick), "timer tick");
+}
+
+void ble_battery_update(uint8_t percent) {
+	if (percent > 100) {
+		percent = 100;
+	}
+	if (percent == battery_level) {
+		return;
+	}
+	battery_level = percent;
+	uint8_t level = percent;
+	notify(battery_level_handle, battery_level_notify_state,
+	       &level, sizeof(level), "battery level");
+}
+
+static int battery_level_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
+	if (ctxt->op != BLE_GATT_ACCESS_OP_READ_CHR) {
+		return BLE_ATT_ERR_UNLIKELY;
+	}
+	uint8_t level = battery_level;
+	ESP_LOGD(TAG, "battery level read: %d%%", level);
+	if (os_mbuf_append(ctxt->om, &level, sizeof(level)) != 0) {
+		return BLE_ATT_ERR_INSUFFICIENT_RES;
+	}
+	return 0;
 }
 
 static int data_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
