@@ -1,0 +1,45 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.0.7
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [gnarl, blink, regtest, oledtest, mmtune, pumpstat]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Prepare project
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          make clean
+          make ${{ matrix.project }}
+
+      - name: Build
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          cd project
+          idf.py build
+
+      - name: Upload firmware
+        if: matrix.project == 'gnarl'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnarl-firmware
+          path: |
+            project/build/*.bin
+            project/build/bootloader/bootloader.bin
+            project/build/partition_table/partition-table.bin
+            project/build/flash_args
