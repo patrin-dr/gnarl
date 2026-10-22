@@ -140,6 +140,8 @@ void rfm95_reset(void);
 
 void rfm95_init(void);
 
+void rfm95_sleep(void);
+
 int read_version(void);
 
 int version_major(int v);
