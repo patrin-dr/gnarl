@@ -37,4 +37,14 @@ void send_code(const uint8_t code);
 void send_bytes(const uint8_t *buf, int count);
 void print_bytes(const char* msg, const uint8_t *buf, int count);
 
+// Update the BLE Battery Service level (0-100) and notify subscribers.
+void ble_battery_update(uint8_t percent);
+
+// Low-battery check at boot: returns only if the battery is good enough
+// to run (or sensing is unavailable); otherwise enters deep sleep.
+void power_boot_check(void);
+
+// Start the periodic battery monitor (display, BLE level, cutoff).
+void start_power_monitor(void);
+
 #endif // _GNARL_H
