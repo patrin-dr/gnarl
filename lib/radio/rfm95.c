@@ -60,6 +60,12 @@ static inline void set_mode_transmit(void) {
 	set_mode(MODE_TX);
 }
 
+// Put the radio into Sleep mode (configuration registers are retained).
+// Standby draws about 1.6 mA; Sleep draws well under 1 uA.
+void rfm95_sleep(void) {
+	set_mode_sleep();
+}
+
 static inline void sequencer_stop(void) {
 	write_register(REG_SEQ_CONFIG_1, SEQUENCER_STOP);
 }
@@ -221,6 +227,8 @@ void transmit(uint8_t *buf, int count) {
 	}
 	xmit_byte(0);
 	wait_for_transmit_done();
+	// Stay in Standby so that a following receive can start quickly;
+	// callers that are done with the radio should call rfm95_sleep().
 	set_mode_standby();
 	tx_packets++;
 }
