@@ -7,7 +7,17 @@
 #include "version.h"
 
 #define TAG		"GNARL"
+
+// Uncomment for verbose logging, including hex dumps of every radio
+// and BLE packet. Useful when debugging with AAPS; costs power and
+// adds latency in the radio task, so leave it off for daily use.
+// #define GNARL_DEBUG
+
+#ifdef GNARL_DEBUG
 #define LOG_LOCAL_LEVEL	ESP_LOG_DEBUG
+#else
+#define LOG_LOCAL_LEVEL	ESP_LOG_INFO
+#endif
 #include <esp_log.h>
 
 #define MILLISECONDS	1000
