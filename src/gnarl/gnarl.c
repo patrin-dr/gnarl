@@ -1,5 +1,6 @@
 #include "gnarl.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -18,6 +19,9 @@
 #define MAX_PARAM_LEN	16
 #define MAX_PACKET_LEN	107
 
+// Longest Medtronic packet; 71 bytes encode to 107 bytes with 4b6b.
+#define MAX_DECODED_PACKET_LEN	71
+
 typedef enum {
 	ENCODING_NONE = 0,
 	ENCODING_4B6B = 2,
@@ -35,6 +39,9 @@ typedef struct {
 } rfspy_request_t;
 
 #define QUEUE_LENGTH		20
+
+// How long gnarl_loop waits for a request before resetting the watchdog.
+#define IDLE_WAIT_MS		1000
 
 static QueueHandle_t request_queue;
 
@@ -101,17 +108,36 @@ static inline void reverse_four_bytes(uint32_t *n) {
 	swap_bytes(&p[1], &p[2]);
 }
 
-// 71-byte long packet encodes to 107 bytes.
-static uint8_t pkt_buf[107];
+// Reply PARAM_ERROR if a command's parameters are shorter than required.
+static bool check_len(const char *name, int len, int min_len) {
+	if (len >= min_len) {
+		return true;
+	}
+	ESP_LOGE(TAG, "%s: parameter length %d < %d", name, len, min_len);
+	send_code(RESPONSE_CODE_PARAM_ERROR);
+	return false;
+}
 
-static void send(uint8_t *data, int len, int repeat_count, int delay_ms) {
+// 71-byte long packet encodes to 107 bytes.
+static uint8_t pkt_buf[MAX_PACKET_LEN];
+
+// Returns false (without transmitting) if the packet is too long.
+static bool send(uint8_t *data, int len, int repeat_count, int delay_ms) {
 	if (len > 0 && data[len-1] == 0) {
 		len--;
 	}
 	switch (encoding_type) {
 	case ENCODING_NONE:
+		if (len > MAX_PACKET_LEN) {
+			ESP_LOGE(TAG, "send: packet too long (%d bytes)", len);
+			return false;
+		}
 		break;
 	case ENCODING_4B6B:
+		if (len > MAX_DECODED_PACKET_LEN) {
+			ESP_LOGE(TAG, "send: packet too long for 4b6b (%d bytes)", len);
+			return false;
+		}
 		len = encode_4b6b(data, pkt_buf, len);
 		data = pkt_buf;
 		break;
@@ -126,6 +152,7 @@ static void send(uint8_t *data, int len, int repeat_count, int delay_ms) {
 		transmit(data, len);
 		repeat_count--;
 	}
+	return true;
 }
 
 // Transform an RSSI value back into the raw encoding that the TI CC111x radios use.
@@ -171,6 +198,9 @@ static void rx_common(int n, int rssi) {
 static volatile int in_get_packet = 0;
 
 static void get_packet(const uint8_t *buf, int len) {
+	if (!check_len("get_packet", len, sizeof(get_packet_cmd_t))) {
+		return;
+	}
 	get_packet_cmd_t *p = (get_packet_cmd_t *)buf;
 	reverse_four_bytes(&p->timeout_ms);
 	ESP_LOGD(TAG, "get_packet: listen_channel %d timeout_ms %lu",
@@ -182,16 +212,25 @@ static void get_packet(const uint8_t *buf, int len) {
 }
 
 static void send_packet(const uint8_t *buf, int len) {
+	if (!check_len("send_packet", len, sizeof(send_packet_cmd_t))) {
+		return;
+	}
 	send_packet_cmd_t *p = (send_packet_cmd_t *)buf;
 	reverse_two_bytes(&p->delay_ms);
 	ESP_LOGD(TAG, "send_packet: len %d send_channel %d repeat_count %d delay_ms %d",
 		 len, p->send_channel, p->repeat_count, p->delay_ms);
 	len -= (p->packet - (uint8_t *)p);
-	send(p->packet, len, p->repeat_count, p->delay_ms);
+	if (!send(p->packet, len, p->repeat_count, p->delay_ms)) {
+		send_code(RESPONSE_CODE_PARAM_ERROR);
+		return;
+	}
 	send_code(RESPONSE_CODE_SUCCESS);
 }
 
 static void send_and_listen(const uint8_t *buf, int len) {
+	if (!check_len("send_and_listen", len, sizeof(send_and_listen_cmd_t))) {
+		return;
+	}
 	send_and_listen_cmd_t *p = (send_and_listen_cmd_t *)buf;
 	reverse_two_bytes(&p->delay_ms);
 	reverse_four_bytes(&p->timeout_ms);
@@ -201,13 +240,17 @@ static void send_and_listen(const uint8_t *buf, int len) {
 	ESP_LOGD(TAG, "send_and_listen: listen_channel %d timeout_ms %lu retry_count %d",
 		 p->listen_channel, p->timeout_ms, p->retry_count);
 	len -= (p->packet - (uint8_t *)p);
-	send(p->packet, len, p->repeat_count, p->delay_ms);
+	if (!send(p->packet, len, p->repeat_count, p->delay_ms)) {
+		send_code(RESPONSE_CODE_PARAM_ERROR);
+		return;
+	}
 	int n = receive(rx_buf.packet, sizeof(rx_buf.packet), p->timeout_ms);
 	int rssi = read_rssi();
 	for (int retries = p->retry_count; retries > 0; retries--) {
 		if (n != 0) {
 			break;
 		}
+		esp_task_wdt_reset();
 		send(p->packet, len, p->repeat_count, p->delay_ms);
 		n = receive(rx_buf.packet, sizeof(rx_buf.packet), p->timeout_ms);
 		rssi = read_rssi();
@@ -241,8 +284,7 @@ static void check_frequency(void) {
 
 static void update_register(const uint8_t *buf, int len) {
 	// AAPS sends 2 bytes, Loop sends 10
-	if (len < 2) {
-		ESP_LOGE(TAG, "update_register: len = %d", len);
+	if (!check_len("update_register", len, 2)) {
 		return;
 	}
 	uint8_t addr = buf[0];
@@ -261,8 +303,7 @@ static void update_register(const uint8_t *buf, int len) {
 }
 
 static void led_mode(const uint8_t *buf, int len) {
-	if (len < 2) {
-		ESP_LOGE(TAG, "led_mode: len = %d", len);
+	if (!check_len("led_mode", len, 2)) {
 		return;
 	}
 	ESP_LOGD(TAG, "led_mode: led %02X mode %02X", buf[0], buf[1]);
@@ -270,6 +311,9 @@ static void led_mode(const uint8_t *buf, int len) {
 }
 
 static void read_register(const uint8_t *buf, int len) {
+	if (!check_len("read_register", len, 1)) {
+		return;
+	}
 	uint8_t addr = buf[0];
 	uint8_t value = 0;
 	switch (addr) {
@@ -282,6 +326,9 @@ static void read_register(const uint8_t *buf, int len) {
 }
 
 static void set_sw_encoding(const uint8_t *buf, int len) {
+	if (!check_len("set_sw_encoding", len, 1)) {
+		return;
+	}
 	ESP_LOGD(TAG, "encoding mode %02X", buf[0]);
 	switch (buf[0]) {
 	case ENCODING_NONE:
@@ -320,6 +367,12 @@ void rfspy_command(const uint8_t *buf, int count, int rssi) {
 		return;
 	}
 	rfspy_cmd_t cmd = buf[1];
+	int param_len = count - 2;
+	if (param_len > (int)sizeof(((rfspy_request_t *)0)->data)) {
+		ESP_LOGE(TAG, "rfspy_command: command %d parameters too long (%d bytes)", cmd, param_len);
+		send_code(RESPONSE_CODE_PARAM_ERROR);
+		return;
+	}
 
 	// GetPacket is used by Loop to wait for MySentry packets.
 	// It is fine to ignore subsequent calls if in_get_packet is true
@@ -340,7 +393,7 @@ void rfspy_command(const uint8_t *buf, int count, int rssi) {
 	}
 	rfspy_request_t req = {
 		.command = cmd,
-		.length = count - 2,
+		.length = param_len,
 		.rssi = rssi,
 	};
 	memcpy(req.data, buf + 2, req.length);
@@ -355,13 +408,12 @@ void rfspy_command(const uint8_t *buf, int count, int rssi) {
 static void gnarl_loop(void *unused) {
 	ESP_LOGD(TAG, "starting gnarl_loop");
 	esp_task_wdt_add(0);
-	const int timeout_ms = 60*MILLISECONDS;
 	for (;;) {
+		esp_task_wdt_reset();
 		rfspy_request_t req;
-		if (!xQueueReceive(request_queue, &req, pdMS_TO_TICKS(timeout_ms))) {
+		if (!xQueueReceive(request_queue, &req, pdMS_TO_TICKS(IDLE_WAIT_MS))) {
 			continue;
 		}
-		esp_task_wdt_reset();
 		switch (req.command) {
 		case CmdGetState:
 			ESP_LOGI(TAG, "CmdGetState");
@@ -410,6 +462,7 @@ static void gnarl_loop(void *unused) {
 			break;
 		default:
 			ESP_LOGE(TAG, "unimplemented rfspy command %d", req.command);
+			send_code(RESPONSE_CODE_UNKNOWN_COMMAND);
 			break;
 		}
 		display_update(PHONE_RSSI, req.rssi);
