@@ -36,6 +36,19 @@ jobs:
           cd project
           idf.py build
 
+      - name: Check chip
+        shell: bash
+        run: |
+          case "${{ matrix.board }}" in
+            heltec_v3*) want=esp32s3; boot=0x0 ;;
+            *)          want=esp32;   boot=0x1000 ;;
+          esac
+          got=$(sed -n 's/^CONFIG_IDF_TARGET="\(.*\)"/\1/p' project/sdkconfig)
+          echo "board ${{ matrix.board }}: target $got"
+          head -5 project/build/flash_args
+          test "$got" = "$want"
+          grep -q "^$boot bootloader/bootloader.bin" project/build/flash_args
+
       - name: Upload firmware
         uses: actions/upload-artifact@v6
         with:
