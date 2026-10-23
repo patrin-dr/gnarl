@@ -15,7 +15,8 @@ jobs:
         project: [gnarl, blink, regtest, oledtest, mmtune, pumpstat]
         # heltec_v2: ESP32 with on-board SX1276.
         # heltec_v3_rfm95: ESP32-S3 (Heltec V3.x) with an external RFM95W.
-        board: [heltec_v2, heltec_v3_rfm95]
+        # lilygo_t3_v161: LilyGO T3 LoRa32 V1.6.1 (ESP32 + SX1276).
+        board: [heltec_v2, heltec_v3_rfm95, lilygo_t3_v161]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
