@@ -3,7 +3,34 @@
 ## This fork: Heltec WiFi LoRa 32 V2 (868 MHz)
 
 Branch `heltec-v2` ports GNARL to the **Heltec WiFi LoRa 32 V2 / V2.1**
-(ESP32 + SX1276, 868 MHz) for a Medtronic MiniMed 722 WW pump with AndroidAPS.
+(ESP32 + SX1276, 868 MHz) and **V3.x with an external RFM95W** for a
+Medtronic MiniMed 722 WW pump with AndroidAPS.
+
+Supported boards (choose with `make gnarl BOARD=...`, default `heltec_v2`):
+
+| Board | `BOARD=` | Radio |
+| --- | --- | --- |
+| Heltec WiFi LoRa 32 V2 / V2.1 (ESP32) | `heltec_v2` | on-board SX1276 |
+| Heltec WiFi LoRa 32 V3 / V3.1 / V3.2 (ESP32-S3) | `heltec_v3_rfm95` | **external RFM95W 868 MHz** |
+
+Heltec V3.x boards carry an SX1262, which has no OOK and cannot talk to
+Medtronic pumps. Wire an RFM95W (SX1276) module to the V3 header instead;
+the on-board SX1262 is put to sleep at start-up:
+
+| RFM95W | Heltec V3 (silkscreen label) |
+| --- | --- |
+| 3.3V | 3V3 |
+| GND | GND |
+| SCK | GPIO5 |
+| MISO | GPIO7 |
+| MOSI | GPIO6 |
+| NSS / CS | GPIO4 |
+| RESET | GPIO2 |
+| DIO2 | GPIO38 |
+
+DIO0 and DIO1 are not needed. Pins and other board details live in
+`include/boards/`. CI builds every program for both boards; firmware for
+V3 is named `<program>-heltec_v3_rfm95-firmware`.
 
 Changes compared to upstream:
 
@@ -43,7 +70,7 @@ Changes compared to upstream:
   v5.0.7 on every push; each run has `<program>-firmware` artifacts that can
   be flashed with `esptool` without installing ESP-IDF:
 
-      python3 -m esptool --chip esp32 -p <port> -b 460800 write_flash @flash_args
+      python3 -m esptool --chip auto -p <port> -b 460800 write_flash @flash_args
 
   (run in the unpacked artifact directory).
 * **Releases**: pushing a tag such as `v0.2.0` publishes a GitHub Release
