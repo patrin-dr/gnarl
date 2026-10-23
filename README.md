@@ -21,15 +21,30 @@ Changes compared to upstream:
   (0x180F) for AndroidAPS, battery level on the OLED, deep sleep below
   `BATTERY_CUTOFF_MV` to protect the cell. Calibrate with
   `BATTERY_CALIBRATION_PCT` against a multimeter.
+* **Phone lock** (`BLE_LOCK_TO_PHONE`): the RileyLink characteristics
+  require an encrypted, bonded link. The first phone that pairs ("Just
+  Works", Android asks once to pair with GNARL) becomes the owner; any
+  other device is disconnected. Hold **PRG for 5 s** to forget the phone,
+  then also "Forget" GNARL in the phone's Bluetooth settings and pair again.
+* **Boot screen**: firmware version (`git describe`), pump frequency,
+  TX amplifier mode and pairing state, shown for 4 s after power-on.
+* **BLE transmit power** `BLE_TX_POWER` (default 0 dBm) — raise it if the
+  phone connection drops.
+* **TX amplifier**: `LORA_TX_PA_BOOST` / `LORA_TX_POWER_DBM` (default
+  PA_BOOST, +10 dBm; upstream used the RFO output).
 * **Logging**: INFO by default; uncomment `GNARL_DEBUG` in
   `src/gnarl/gnarl.h` for packet dumps.
 * **CI**: GitHub Actions builds GNARL and the test apps with ESP-IDF
-  v5.0.7 on every push; each run has a `gnarl-firmware` artifact that can
+  v5.0.7 on every push; each run has `<program>-firmware` artifacts that can
   be flashed with `esptool` without installing ESP-IDF:
 
       python3 -m esptool --chip esp32 -p <port> -b 460800 write_flash @flash_args
 
   (run in the unpacked artifact directory).
+* **Releases**: pushing a tag such as `v0.2.0` publishes a GitHub Release
+  with a zip for every program (`gnarl`, `blink`, `regtest`, `oledtest`,
+  `mmtune`, `pumpstat`), each with a `FLASHING.txt`. Artifacts of normal
+  builds expire after 90 days; releases are kept.
 
 This is DIY software for an insulin pump. Test in open loop first, keep
 the pump's own alarms on, and always have a manual fallback.
