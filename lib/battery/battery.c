@@ -7,6 +7,7 @@
 #include <esp_adc/adc_cali_scheme.h>
 #include <esp_adc/adc_oneshot.h>
 #include <esp_log.h>
+#include <esp_rom_sys.h>
 
 #include "module.h"
 
@@ -16,8 +17,19 @@
 
 #ifdef BATTERY_ADC_UNIT
 
-// Nominal full-scale input for ADC_ATTEN_DB_6, used only without calibration.
-#define UNCALIBRATED_FULL_SCALE_MV	2200
+// Approximate full-scale input per attenuation, used only without calibration.
+static int uncalibrated_full_scale_mv(void) {
+	switch (BATTERY_ADC_ATTEN) {
+	case ADC_ATTEN_DB_0:
+		return 950;
+	case ADC_ATTEN_DB_2_5:
+		return 1250;
+	case ADC_ATTEN_DB_6:
+		return 1750;
+	default:
+		return 3100;
+	}
+}
 #define ADC_MAX_RAW			4095
 
 static adc_oneshot_unit_handle_t adc;
@@ -41,6 +53,23 @@ void battery_init(void) {
 	gpio_config(&vext);
 	gpio_set_level(VEXT, 0);
 #endif
+#ifdef BATTERY_CTRL
+	// Separate divider switch (Heltec V3.x: ADC_Ctrl, GPIO37).
+	int active = 1;
+#ifdef BATTERY_CTRL_AUTO_POLARITY
+	// V3/V3.1 pull the pin up and switch on LOW; V3.2 has a transistor
+	// switched on HIGH and no pull-up. Read the idle level to tell.
+	gpio_reset_pin(BATTERY_CTRL);
+	gpio_set_direction(BATTERY_CTRL, GPIO_MODE_INPUT);
+	gpio_set_pull_mode(BATTERY_CTRL, GPIO_FLOATING);
+	esp_rom_delay_us(100);
+	active = gpio_get_level(BATTERY_CTRL) ? 0 : 1;
+	ESP_LOGI(TAG, "battery divider control is active %s (%s)",
+		 active ? "HIGH" : "LOW", active ? "V3.2" : "V3/V3.1");
+#endif
+	gpio_set_direction(BATTERY_CTRL, GPIO_MODE_OUTPUT);
+	gpio_set_level(BATTERY_CTRL, active);
+#endif
 	adc_oneshot_unit_init_cfg_t unit_cfg = {
 		.unit_id = BATTERY_ADC_UNIT,
 	};
@@ -59,7 +88,19 @@ void battery_init(void) {
 		return;
 	}
 	cali = NULL;
-#if ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
+#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+	// ESP32-S3 and newer chips.
+	adc_cali_curve_fitting_config_t cali_cfg = {
+		.unit_id  = BATTERY_ADC_UNIT,
+		.atten    = BATTERY_ADC_ATTEN,
+		.bitwidth = ADC_BITWIDTH_DEFAULT,
+	};
+	err = adc_cali_create_scheme_curve_fitting(&cali_cfg, &cali);
+	if (err != ESP_OK) {
+		ESP_LOGW(TAG, "no ADC calibration (%s); readings are approximate", esp_err_to_name(err));
+		cali = NULL;
+	}
+#elif ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
 	adc_cali_line_fitting_config_t cali_cfg = {
 		.unit_id  = BATTERY_ADC_UNIT,
 		.atten    = BATTERY_ADC_ATTEN,
@@ -101,7 +142,7 @@ int battery_millivolts(void) {
 			return -1;
 		}
 	} else {
-		mv = raw * UNCALIBRATED_FULL_SCALE_MV / ADC_MAX_RAW;
+		mv = raw * uncalibrated_full_scale_mv() / ADC_MAX_RAW;
 	}
 	return mv * BATTERY_DIVIDER_X100 / 100 * BATTERY_CALIBRATION_PCT / 100;
 }

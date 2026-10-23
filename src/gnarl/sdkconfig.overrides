@@ -1,7 +1,15 @@
-# Settings applied on top of src/gnarl/sdkconfig by mk/make-project.sh.
+# Settings applied on top of src/gnarl/sdkconfig (ESP32) or appended to
+# sdkconfig.defaults (ESP32-S3) by mk/make-project.sh.
 # Keep this file small: one line per changed option.
 
 # Power management: let the CPU drop from 80 MHz to 40 MHz (XTAL) when idle.
 # Light sleep is not enabled in code: with Bluetooth clocked from the main
 # crystal (no external 32 kHz crystal) it would be blocked anyway on ESP32.
 CONFIG_PM_ENABLE=y
+
+# Show INFO messages (board, TX amplifier, battery, pairing) in the serial
+# monitor; the ESP32 sdkconfig defaulted to WARN, which hid them.
+# CONFIG_LOG_DEFAULT_LEVEL_WARN is not set
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+CONFIG_LOG_MAXIMUM_LEVEL=3

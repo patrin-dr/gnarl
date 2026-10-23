@@ -7,11 +7,12 @@ out=${2:-screen_preview_$lang}
 top=$(pwd)
 mkdir -p "$out/include"
 cp include/module.h "$out/include/module.h"
+printf '#include "boards/heltec_v2.h"\n' > "$out/include/board.h"
 if [ "$lang" = en ]; then
     sed -i.bak 's|^#define DISPLAY_LANG_RU|// #define DISPLAY_LANG_RU|' "$out/include/module.h"
 fi
 cc -std=gnu11 -O1 -w -o "$out/preview" \
-    -I"$out/include" -Ilib/oled -Isrc/gnarl -Ilib/u8g2/csrc \
+    -I"$out/include" -Iinclude -Ilib/oled -Isrc/gnarl -Ilib/u8g2/csrc \
     tools/screen_preview/preview.c src/gnarl/screens.c lib/u8g2/csrc/*.c
 cd "$out" && ./preview
 python3 - <<'PY' 2>/dev/null || echo "(install Pillow for PNG output; PBM files written)"

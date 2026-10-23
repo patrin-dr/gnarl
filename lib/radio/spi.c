@@ -8,6 +8,14 @@
 
 static spi_device_handle_t spi_dev;
 
+// ESP32: VSPI (SPI3). ESP32-S3 has no VSPI name; use SPI2 (FSPI). Any pins
+// can be routed to it through the GPIO matrix at 5 MHz.
+#ifdef CONFIG_IDF_TARGET_ESP32
+#define RADIO_SPI_HOST	VSPI_HOST
+#else
+#define RADIO_SPI_HOST	SPI2_HOST
+#endif
+
 void spi_init(void) {
 	// Initialize the SPI bus.
 	spi_bus_config_t buscfg = {
@@ -17,7 +25,7 @@ void spi_init(void) {
 		.quadwp_io_num = -1,
 		.quadhd_io_num = -1,
 	};
-	ESP_ERROR_CHECK(spi_bus_initialize(VSPI_HOST, &buscfg, 0));
+	ESP_ERROR_CHECK(spi_bus_initialize(RADIO_SPI_HOST, &buscfg, 0));
 
 	gpio_set_direction(LORA_CS, GPIO_MODE_OUTPUT);
 	gpio_set_level(LORA_CS, 1);
@@ -31,7 +39,7 @@ void spi_init(void) {
 		.spics_io_num	= LORA_CS,
 		.queue_size	= 1,
 	};
-	ESP_ERROR_CHECK(spi_bus_add_device(VSPI_HOST, &devcfg, &spi_dev));
+	ESP_ERROR_CHECK(spi_bus_add_device(RADIO_SPI_HOST, &devcfg, &spi_dev));
 }
 
 // Read register by sending the address followed by a dummy byte.

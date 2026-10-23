@@ -13,6 +13,9 @@ jobs:
       fail-fast: false
       matrix:
         project: [gnarl, blink, regtest, oledtest, mmtune, pumpstat]
+        # heltec_v2: ESP32 with on-board SX1276.
+        # heltec_v3_rfm95: ESP32-S3 (Heltec V3.x) with an external RFM95W.
+        board: [heltec_v2, heltec_v3_rfm95]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -24,7 +27,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           make clean
-          make ${{ matrix.project }}
+          make ${{ matrix.project }} BOARD=${{ matrix.board }}
 
       - name: Build
         shell: bash
@@ -36,7 +39,8 @@ jobs:
       - name: Upload firmware
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ matrix.project }}-firmware
+          # Heltec V2 keeps the original names (gnarl-firmware, ...).
+          name: ${{ matrix.board == 'heltec_v2' && format('{0}-firmware', matrix.project) || format('{0}-{1}-firmware', matrix.project, matrix.board) }}
           path: |
             project/build/*.bin
             project/build/bootloader/bootloader.bin
@@ -87,7 +91,9 @@ jobs:
             name="${d%/}"
             printf '%s\n' \
               "Flash with: python3 -m pip install esptool" \
-              "python3 -m esptool --chip esp32 -p <port> -b 460800 write_flash @flash_args" \
+              "python3 -m esptool --chip auto -p <port> -b 460800 write_flash @flash_args" \
+              "Archives named *-heltec_v3_rfm95-* are for Heltec V3.x + RFM95W," \
+              "the others for Heltec V2 / V2.1." \
               "(run in this directory; port on macOS: ls /dev/cu.*)" > "$name/FLASHING.txt"
             (cd "$name" && zip -qr "../${name}-${GITHUB_REF_NAME}.zip" .)
           done

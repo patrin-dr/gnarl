@@ -6,6 +6,8 @@
 
 #include "display.h"
 #include "gnarl.h"
+#include "module.h"
+#include "onboard_sx1262.h"
 #include "rfm95.h"
 
 // Lowest CPU frequency while idle: the 40 MHz crystal frequency.
@@ -13,7 +15,13 @@
 
 static void power_init(void) {
 #ifdef CONFIG_PM_ENABLE
+#if CONFIG_IDF_TARGET_ESP32
 	esp_pm_config_esp32_t pm = {
+#elif CONFIG_IDF_TARGET_ESP32S3
+	esp_pm_config_esp32s3_t pm = {
+#else
+#error "add the esp_pm_config type for this chip"
+#endif
 		.max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
 		.min_freq_mhz = MIN_CPU_FREQ_MHZ,
 		.light_sleep_enable = false,
@@ -30,8 +38,14 @@ static void power_init(void) {
 }
 
 void app_main(void) {
-	ESP_LOGI(TAG, "GNARL %s (%s)", esp_app_get_description()->version, SUBG_RFSPY_VERSION);
+#ifdef GNARL_DEBUG
+	esp_log_level_set(TAG, ESP_LOG_DEBUG);
+#endif
+	ESP_LOGI(TAG, "GNARL %s on %s (%s)", esp_app_get_description()->version,
+		 BOARD_NAME, SUBG_RFSPY_VERSION);
 	power_init();
+	// Heltec V3.x: the on-board SX1262 is unused (no OOK); stop its standby current.
+	onboard_sx1262_sleep();
 	rfm95_init();
 	// May not return: deep sleep if the battery is too low to run.
 	power_boot_check();

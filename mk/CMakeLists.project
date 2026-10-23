@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.5)
 
 include_directories(BEFORE include)
 
+# Chip for the selected board (filled in by mk/make-project.sh).
+set(IDF_TARGET @IDF_TARGET@)
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 project(xyzzy)
