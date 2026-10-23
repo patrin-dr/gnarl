@@ -34,10 +34,9 @@ jobs:
           idf.py build
 
       - name: Upload firmware
-        if: matrix.project == 'gnarl'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: gnarl-firmware
+          name: ${{ matrix.project }}-firmware
           path: |
             project/build/*.bin
             project/build/bootloader/bootloader.bin
