@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+#include <esp_app_desc.h>
 #include <esp_pm.h>
 #include <esp_task_wdt.h>
 
@@ -29,7 +30,7 @@ static void power_init(void) {
 }
 
 void app_main(void) {
-	ESP_LOGI(TAG, "%s", SUBG_RFSPY_VERSION);
+	ESP_LOGI(TAG, "GNARL %s (%s)", esp_app_get_description()->version, SUBG_RFSPY_VERSION);
 	power_init();
 	rfm95_init();
 	// May not return: deep sleep if the battery is too low to run.
@@ -40,5 +41,6 @@ void app_main(void) {
 	ESP_LOGD(TAG, "frequency set to %lu Hz", read_frequency());
 	display_init();
 	gnarl_init();
+	display_update(SHOW_SPLASH, read_frequency() / 1000);
 	start_power_monitor();
 }

@@ -3,9 +3,11 @@
 #include <stdbool.h>
 #include <unistd.h>
 
+#include <esp_bt.h>
 #include <esp_nimble_hci.h>
 #include <esp_timer.h>
 #include <host/ble_gap.h>
+#include <host/ble_store.h>
 #include <host/util/util.h>
 #include <nimble/nimble_port.h>
 #include <nimble/nimble_port_freertos.h>
@@ -16,6 +18,7 @@
 
 #include "commands.h"
 #include "display.h"
+#include "module.h"
 
 #define MAX_DATA		150
 #define DEFAULT_NAME		"GNARL"
@@ -29,7 +32,20 @@
 
 static uint8_t custom_name[CUSTOM_NAME_SIZE];
 
-void ble_store_ram_init(void);
+// Persistent (NVS) storage of bonding keys: CONFIG_BT_NIMBLE_NVS_PERSIST.
+void ble_store_config_init(void);
+
+#ifdef BLE_LOCK_TO_PHONE
+// Characteristics that control the pump need an encrypted (bonded) link.
+#define SEC_READ	(BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC)
+#define SEC_WRITE	(BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC)
+#else
+#define SEC_READ	BLE_GATT_CHR_F_READ
+#define SEC_WRITE	BLE_GATT_CHR_F_WRITE
+#endif
+
+// NVS key holding the identity address of the paired phone.
+#define OWNER_KEY		"owner"
 
 #define B0(x)	((x) & 0xFF)
 #define B1(x)	(((x) >> 8) & 0xFF)
@@ -92,7 +108,7 @@ static const struct ble_gatt_svc_def service_list[] = {
 			{
 				.uuid = &data_uuid.u,
 				.access_cb = data_access,
-				.flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+				.flags = SEC_READ | SEC_WRITE,
 			},
 			{
 				.uuid = &response_count_uuid.u,
@@ -109,7 +125,7 @@ static const struct ble_gatt_svc_def service_list[] = {
 			{
 				.uuid = &custom_name_uuid.u,
 				.access_cb = custom_name_access,
-				.flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+				.flags = BLE_GATT_CHR_F_READ | SEC_WRITE,
 			},
 			{
 				.uuid = &firmware_version_uuid.u,
@@ -119,7 +135,7 @@ static const struct ble_gatt_svc_def service_list[] = {
 			{
 				.uuid = &led_mode_uuid.u,
 				.access_cb = led_mode_access,
-				.flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+				.flags = BLE_GATT_CHR_F_READ | SEC_WRITE,
 			},
 			{}, // End of characteristic list.
 		},
@@ -162,6 +178,117 @@ static void server_init(void) {
 	};
 	ESP_ERROR_CHECK(esp_timer_create(&timer_args, &t));
 	ESP_ERROR_CHECK(esp_timer_start_periodic(t, 60*SECONDS));
+}
+
+// ---- Phone lock -------------------------------------------------------
+
+#ifdef BLE_LOCK_TO_PHONE
+static bool have_owner;
+static ble_addr_t owner_addr;
+static esp_timer_handle_t pairing_timer;
+
+static void load_owner(void) {
+	have_owner = false;
+	nvs_handle h;
+	if (nvs_open(STORAGE_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
+		return;
+	}
+	size_t len = sizeof(owner_addr);
+	if (nvs_get_blob(h, OWNER_KEY, &owner_addr, &len) == ESP_OK && len == sizeof(owner_addr)) {
+		have_owner = true;
+	}
+	nvs_close(h);
+}
+
+static void save_owner(const ble_addr_t *addr) {
+	nvs_handle h;
+	esp_err_t err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &h);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "save_owner: nvs_open: %s", esp_err_to_name(err));
+		return;
+	}
+	err = nvs_set_blob(h, OWNER_KEY, addr, sizeof(*addr));
+	if (err == ESP_OK) {
+		err = nvs_commit(h);
+	}
+	nvs_close(h);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "save_owner: %s", esp_err_to_name(err));
+		return;
+	}
+	owner_addr = *addr;
+	have_owner = true;
+}
+
+static bool is_owner(const ble_addr_t *addr) {
+	return have_owner && ble_addr_cmp(addr, &owner_addr) == 0;
+}
+
+static void log_addr(const char *what, const ble_addr_t *a) {
+	ESP_LOGI(TAG, "%s %02x:%02x:%02x:%02x:%02x:%02x (type %d)", what,
+		 a->val[5], a->val[4], a->val[3], a->val[2], a->val[1], a->val[0], a->type);
+}
+
+// Runs in the esp_timer task: drop a link that never became encrypted.
+static void pairing_timeout(void *arg) {
+	uint16_t h = connection_handle;
+	if (h == BLE_HS_CONN_HANDLE_NONE) {
+		return;
+	}
+	struct ble_gap_conn_desc desc;
+	if (ble_gap_conn_find(h, &desc) == 0 && !desc.sec_state.encrypted) {
+		ESP_LOGW(TAG, "no encryption after %d s; disconnecting", BLE_PAIRING_TIMEOUT_S);
+		ble_gap_terminate(h, BLE_ERR_AUTH_FAIL);
+	}
+}
+
+// Called when a link becomes encrypted: accept the owner, adopt the first
+// phone as owner, reject (and forget) anyone else.
+static void check_encrypted_peer(uint16_t conn_handle) {
+	struct ble_gap_conn_desc desc;
+	if (ble_gap_conn_find(conn_handle, &desc) != 0) {
+		return;
+	}
+	esp_timer_stop(pairing_timer);
+	if (!have_owner) {
+		save_owner(&desc.peer_id_addr);
+		log_addr("paired with phone", &desc.peer_id_addr);
+		return;
+	}
+	if (is_owner(&desc.peer_id_addr)) {
+		ESP_LOGI(TAG, "paired phone connected");
+		return;
+	}
+	log_addr("rejecting unknown device", &desc.peer_id_addr);
+	display_update(PHONE_REJECTED, 0);
+	ble_gap_terminate(conn_handle, BLE_ERR_AUTH_FAIL);
+	ble_store_util_delete_peer(&desc.peer_id_addr);
+}
+#endif // BLE_LOCK_TO_PHONE
+
+ble_pairing_state_t ble_pairing_state(void) {
+#ifdef BLE_LOCK_TO_PHONE
+	return have_owner ? PAIRING_LOCKED : PAIRING_OPEN;
+#else
+	return PAIRING_DISABLED;
+#endif
+}
+
+void ble_forget_phone(void) {
+#ifdef BLE_LOCK_TO_PHONE
+	ESP_LOGW(TAG, "forgetting paired phone");
+	nvs_handle h;
+	if (nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+		nvs_erase_key(h, OWNER_KEY);
+		nvs_commit(h);
+		nvs_close(h);
+	}
+	have_owner = false;
+	ble_store_clear();
+	if (connection_handle != BLE_HS_CONN_HANDLE_NONE) {
+		ble_gap_terminate(connection_handle, BLE_ERR_REM_USER_CONN_TERM);
+	}
+#endif
 }
 
 static void advertise(void) {
@@ -242,6 +369,13 @@ static int handle_gap_event(struct ble_gap_event *e, void *arg) {
 		connected = true;
 		display_update(CONNECTED, true);
 		ESP_LOGI(TAG, "connected");
+#ifdef BLE_LOCK_TO_PHONE
+		// Ask the phone to encrypt (pair the first time, or resume the
+		// existing bond); drop it if that does not happen in time.
+		ble_gap_security_initiate(connection_handle);
+		esp_timer_stop(pairing_timer);
+		esp_timer_start_once(pairing_timer, BLE_PAIRING_TIMEOUT_S * 1000000ULL);
+#endif
 		ESP_LOGD(TAG, "connection handle %04X", connection_handle);
 		ESP_LOGD(TAG, "response count notify handle %04X", response_count_notify_handle);
 		ESP_LOGD(TAG, "timer tick notify handle %04X", timer_tick_notify_handle);
@@ -253,6 +387,9 @@ static int handle_gap_event(struct ble_gap_event *e, void *arg) {
 		timer_tick_notify_state = 0;
 		battery_level_notify_state = 0;
 		connection_handle = BLE_HS_CONN_HANDLE_NONE;
+#ifdef BLE_LOCK_TO_PHONE
+		esp_timer_stop(pairing_timer);
+#endif
 		display_update(CONNECTED, false);
 		ESP_LOGI(TAG, "disconnected, reason %d", e->disconnect.reason);
 		advertise();
@@ -261,6 +398,29 @@ static int handle_gap_event(struct ble_gap_event *e, void *arg) {
 		ESP_LOGD(TAG, "advertising complete");
 		advertise();
 		break;
+#ifdef BLE_LOCK_TO_PHONE
+	case BLE_GAP_EVENT_ENC_CHANGE:
+		if (e->enc_change.status != 0) {
+			ESP_LOGW(TAG, "encryption failed: %d", e->enc_change.status);
+			break;
+		}
+		check_encrypted_peer(e->enc_change.conn_handle);
+		break;
+	case BLE_GAP_EVENT_REPEAT_PAIRING: {
+		// The owner phone lost its bond (e.g. "Forget device") and pairs
+		// again: replace the old keys. Ignore anyone else.
+		struct ble_gap_conn_desc desc;
+		if (ble_gap_conn_find(e->repeat_pairing.conn_handle, &desc) != 0) {
+			return BLE_GAP_REPEAT_PAIRING_IGNORE;
+		}
+		if (!is_owner(&desc.peer_id_addr)) {
+			log_addr("ignoring repeat pairing from", &desc.peer_id_addr);
+			return BLE_GAP_REPEAT_PAIRING_IGNORE;
+		}
+		ble_store_util_delete_peer(&desc.peer_id_addr);
+		return BLE_GAP_REPEAT_PAIRING_RETRY;
+	}
+#endif
 	case BLE_GAP_EVENT_SUBSCRIBE:
 		if (e->subscribe.attr_handle == response_count_notify_handle) {
 			ESP_LOGD(TAG, "notify %d for response count", e->subscribe.cur_notify);
@@ -573,6 +733,24 @@ void gnarl_init(void) {
 	nimble_port_init();
 
 	ble_hs_cfg.sync_cb = sync_callback;
+	ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+#ifdef BLE_LOCK_TO_PHONE
+	// "Just Works" bonding with LE Secure Connections: no PIN to type
+	// (the bridge has no keyboard); keys are kept in flash.
+	ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
+	ble_hs_cfg.sm_bonding = 1;
+	ble_hs_cfg.sm_mitm = 0;
+	ble_hs_cfg.sm_sc = 1;
+	ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+	ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+	load_owner();
+	esp_timer_create_args_t pt = {
+		.callback = pairing_timeout,
+		.name = "pairing",
+	};
+	ESP_ERROR_CHECK(esp_timer_create(&pt, &pairing_timer));
+	ESP_LOGI(TAG, "phone lock on: %s", have_owner ? "paired" : "waiting for first phone");
+#endif
 
 	server_init();
 
@@ -581,6 +759,15 @@ void gnarl_init(void) {
 	int err = ble_svc_gap_device_name_set((char *)custom_name);
 	assert(!err);
 
-	ble_store_ram_init();
+	ble_store_config_init();
+
+	// Lower Bluetooth transmit power (see BLE_TX_POWER in module.h).
+	esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, BLE_TX_POWER);
+	esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, BLE_TX_POWER);
+	esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, BLE_TX_POWER);
+	for (int i = ESP_BLE_PWR_TYPE_CONN_HDL0; i <= ESP_BLE_PWR_TYPE_CONN_HDL8; i++) {
+		esp_ble_tx_power_set(i, BLE_TX_POWER);
+	}
+
 	nimble_port_freertos_init(host_task);
 }

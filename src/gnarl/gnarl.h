@@ -43,6 +43,18 @@ void ble_battery_update(uint8_t percent);
 // Stop the Bluetooth host and controller (before deep sleep).
 void ble_shutdown(void);
 
+// Phone lock (BLE_LOCK_TO_PHONE in module.h).
+typedef enum {
+	PAIRING_DISABLED,	// lock compiled out: any device may connect
+	PAIRING_OPEN,		// lock on, no phone paired yet
+	PAIRING_LOCKED,		// lock on, one phone paired
+} ble_pairing_state_t;
+
+ble_pairing_state_t ble_pairing_state(void);
+
+// Forget the paired phone: the next phone that pairs becomes the owner.
+void ble_forget_phone(void);
+
 // Low-battery check at boot: returns only if the battery is good enough
 // to run (or sensing is unavailable); otherwise enters deep sleep.
 void power_boot_check(void);

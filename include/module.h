@@ -50,6 +50,25 @@
 // 14 dBm (25 mW) is the limit for the 868 MHz short-range-device band.
 #define LORA_TX_POWER_DBM	10
 
+// Bluetooth security: accept only one phone.
+// The first phone that pairs becomes the owner (stored in flash); other
+// devices can still connect but cannot read or write the RileyLink
+// characteristics (they require an encrypted, bonded link) and are
+// disconnected. Android shows a one-time "Pair with GNARL?" prompt.
+// Hold the PRG button for BLE_UNPAIR_HOLD_MS to forget the phone.
+// Comment out to get the upstream behaviour (any device may connect).
+#define BLE_LOCK_TO_PHONE
+#define BLE_UNPAIR_HOLD_MS	5000
+// Disconnect a device that does not start encryption within this time,
+// so a stranger cannot keep the bridge's only advertising slot busy.
+#define BLE_PAIRING_TIMEOUT_S	30
+
+// Bluetooth transmit power (ESP_PWR_LVL_N12 .. ESP_PWR_LVL_P9, 3 dB steps).
+// The phone is usually within a few metres, so the ESP32 default (+3 dBm)
+// is more than needed; 0 dBm saves a little current. Raise it if the phone
+// connection drops (e.g. phone in a bag on the other side of the body).
+#define BLE_TX_POWER		ESP_PWR_LVL_N0
+
 // Battery voltage sensing: 220k/100k divider switched on by Vext (LOW).
 // V2.1: GPIO37 = ADC1 channel 1.  V2.0: GPIO13 = ADC2 channel 4.
 // Comment out BATTERY_ADC_UNIT to disable battery sensing entirely.
