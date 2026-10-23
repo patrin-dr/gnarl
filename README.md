@@ -28,6 +28,11 @@ Changes compared to upstream:
   then also "Forget" GNARL in the phone's Bluetooth settings and pair again.
 * **Boot screen**: firmware version (`git describe`), pump frequency,
   TX amplifier mode and pairing state, shown for 4 s after power-on.
+* **Display language** `DISPLAY_LANG_RU` (on by default): Russian text with
+  Cyrillic fonts; comment out for English. All strings are in
+  `src/gnarl/display_text.h`. `tools/screen_preview/run.sh ru|en` renders
+  every screen on a computer (CI job `screens` does it on each push and
+  fails if text does not fit).
 * **BLE transmit power** `BLE_TX_POWER` (default 0 dBm) — raise it if the
   phone connection drops.
 * **TX amplifier**: `LORA_TX_PA_BOOST` / `LORA_TX_POWER_DBM` (default
