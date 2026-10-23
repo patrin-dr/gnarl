@@ -43,6 +43,29 @@ jobs:
             project/build/partition_table/partition-table.bin
             project/build/flash_args
 
+  # Render every screen (Russian and English) on the runner and fail if
+  # any text does not fit the 128x64 display. Images are kept as artifact.
+  screens:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Render screens
+        run: |
+          python3 -m pip install --quiet pillow || true
+          tools/screen_preview/run.sh ru out/ru
+          tools/screen_preview/run.sh en out/en
+
+      - name: Upload screen images
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: screens
+          path: out/*/*.png
+
   # Push a tag like v0.2.0 to publish a GitHub Release with all firmware.
   release:
     if: startsWith(github.ref, 'refs/tags/v')

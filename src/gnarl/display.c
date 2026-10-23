@@ -15,6 +15,7 @@
 #include "display.h"
 #include "module.h"
 #include "oled.h"
+#include "screens.h"
 
 typedef struct {
 	display_op_t op;
@@ -52,86 +53,19 @@ static void hold_screen(int seconds) {
 	oled_off();
 }
 
-static void show_message(const char *line1, const char *line2, const char *line3) {
-	oled_on();
-	oled_clear();
-	oled_font_medium();
-	oled_align_center();
-	oled_draw_string(64, 24, line1);
-	oled_font_small();
-	if (line2) {
-		oled_draw_string(64, 42, line2);
-	}
-	if (line3) {
-		oled_draw_string(64, 58, line3);
-	}
-	oled_update();
-	hold_screen(DISPLAY_TIMEOUT);
+static int seconds_since_command(void) {
+	return esp_timer_get_time() / 1000000 - command_time;
 }
 
-// Boot screen: firmware version and the settings that matter in the field.
-static void show_splash(int freq_khz) {
-	char buf[40];
-	const esp_app_desc_t *app = esp_app_get_description();
-	oled_on();
-	oled_clear();
-	oled_font_medium();
-	oled_align_center();
-	oled_draw_string(64, 13, "GNARL");
-	oled_font_small();
-	oled_draw_string(64, 26, app->version);
-	snprintf(buf, sizeof(buf), "Pump: %d.%03d MHz", freq_khz / 1000, freq_khz % 1000);
-	oled_draw_string(64, 38, buf);
-#ifdef LORA_TX_PA_BOOST
-	snprintf(buf, sizeof(buf), "TX: PA_BOOST %d dBm", LORA_TX_POWER_DBM);
-#else
-	snprintf(buf, sizeof(buf), "TX: RFO (upstream)");
-#endif
-	oled_draw_string(64, 50, buf);
+static screen_pairing_t pairing_for_screen(void) {
 	switch (ble_pairing_state()) {
 	case PAIRING_LOCKED:
-		oled_draw_string(64, 62, "Phone: paired");
-		break;
+		return SCREEN_PAIRING_LOCKED;
 	case PAIRING_OPEN:
-		oled_draw_string(64, 62, "Phone: not paired yet");
-		break;
+		return SCREEN_PAIRING_OPEN;
 	default:
-		oled_draw_string(64, 62, "Phone lock: off");
-		break;
+		return SCREEN_PAIRING_OFF;
 	}
-	oled_update();
-	hold_screen(SPLASH_TIMEOUT);
-}
-
-static void format_time_ago(char *buf) {
-	int now = esp_timer_get_time() / 1000000;
-	int delta = now - command_time;
-	int min = delta / 60;
-	if (min == 0) {
-		sprintf(buf, "%ds", delta);
-		return;
-	}
-	if (min < 60) {
-		sprintf(buf, "%dm", min);
-		return;
-	}
-	int hr = min / 60;
-	min = min % 60;
-	sprintf(buf, "%dh%dm", hr, min);
-}
-
-static void format_battery(char *buf, int mv) {
-	if (mv < 0) {
-		strcpy(buf, "--");
-		return;
-	}
-	sprintf(buf, "%d%% %d.%02dV", battery_percent(mv), mv / 1000, (mv % 1000) / 10);
-}
-
-static void show_battery_low(int mv) {
-	char buf[20];
-	format_battery(buf, mv);
-	show_message("Battery low", "Turning off", buf);
 }
 
 static void update(display_command_t cmd) {
@@ -154,18 +88,22 @@ static void update(display_command_t cmd) {
 		return;
 	case BATTERY_LOW:
 		urgent_pending = false;
-		show_battery_low(cmd.arg);
+		screen_battery_low(cmd.arg, battery_percent(cmd.arg));
+		hold_screen(DISPLAY_TIMEOUT);
 		return;
 	case PHONE_UNPAIRED:
 		urgent_pending = false;
-		show_message("Phone unpaired", "Pair again from AAPS", NULL);
+		screen_phone_unpaired();
+		hold_screen(DISPLAY_TIMEOUT);
 		return;
 	case PHONE_REJECTED:
 		urgent_pending = false;
-		show_message("Unknown phone", "rejected", "Hold PRG 5 s to unpair");
+		screen_phone_rejected();
+		hold_screen(DISPLAY_TIMEOUT);
 		return;
 	case SHOW_SPLASH:
-		show_splash(cmd.arg);
+		screen_splash(esp_app_get_description()->version, cmd.arg, pairing_for_screen());
+		hold_screen(SPLASH_TIMEOUT);
 		return;
 	case CONNECTED:
 		connected = cmd.arg;
@@ -173,37 +111,8 @@ static void update(display_command_t cmd) {
 	default:
 		break;
 	}
-	oled_on();
-	oled_clear();
-
-	oled_font_medium();
-	oled_align_center();
-	oled_draw_string(64, 13, connected ? "Connected" : "Disconnected");
-
-	oled_font_small();
-	oled_align_left();
-	oled_draw_string(5, 26, "Last command:");
-	oled_draw_string(5, 38, "Phone RSSI:");
-	oled_draw_string(5, 50, "Pump  RSSI:");
-	oled_draw_string(5, 62, "Battery:");
-
-	oled_align_right();
-	char buf[20];
-	format_time_ago(buf);
-	oled_draw_string(122, 26, buf);
-	if (connected) {
-		sprintf(buf, "%d", phone_rssi);
-		oled_draw_string(122, 38, buf);
-		sprintf(buf, "%d", pump_rssi);
-		oled_draw_string(122, 50, buf);
-	} else {
-		oled_draw_string(122, 38, "--");
-		oled_draw_string(122, 50, "--");
-	}
-	format_battery(buf, battery_mv);
-	oled_draw_string(122, 62, buf);
-
-	oled_update();
+	screen_status(connected, seconds_since_command(), phone_rssi, pump_rssi,
+		      battery_mv, battery_mv >= 0 ? battery_percent(battery_mv) : -1);
 	hold_screen(DISPLAY_TIMEOUT);
 }
 

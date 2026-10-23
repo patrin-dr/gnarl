@@ -96,4 +96,8 @@
 // Comment out the following line for a module without OLED
 #define OLED_ENABLE
 
+// Display language: Russian with this line, English without it.
+// Text lives in src/gnarl/display_text.h.
+#define DISPLAY_LANG_RU
+
 #endif // _MODULE_H

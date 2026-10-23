@@ -7,3 +7,4 @@ include/*.pem
 !CMakeLists.txt
 README.*
 !README.md
+screen_preview_*/

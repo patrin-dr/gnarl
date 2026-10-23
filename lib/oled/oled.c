@@ -46,12 +46,23 @@ void oled_font_large(void) {
 }
 
 static const uint8_t *font[NUM_STYLES][NUM_SIZES] = {
+#ifdef DISPLAY_LANG_RU
+	// sans-serif slot, Cyrillic: u8g2 has no proportional sans-serif
+	// Cyrillic font in these sizes, so use the fixed-width X11 fonts
+	// (6x12: 21 chars/line, 8x13: 16 chars/line) and Inconsolata 24.
+	{
+		u8g2_font_6x12_t_cyrillic,
+		u8g2_font_8x13_t_cyrillic,
+		u8g2_font_inr24_t_cyrillic,
+	},
+#else
 	// sans-serif
 	{
 		u8g2_font_helvR08_tr,
 		u8g2_font_helvR12_tr,
 		u8g2_font_helvR24_tr,
 	},
+#endif
 	// serif
 	{
 		u8g2_font_lubR08_tr,
@@ -119,21 +130,22 @@ void oled_align_center(void) {
 	align_mode = CENTER;
 }
 
+// Strings are UTF-8 (needed for Cyrillic; plain ASCII is valid UTF-8).
 int oled_string_width(const char *s) {
 	set_font();
-	return u8g2_GetStrWidth(&u8g2, s);
+	return u8g2_GetUTF8Width(&u8g2, s);
 }
 
 void oled_draw_string(int x, int y, const char *s) {
 	set_font();
 	if (align_mode != LEFT) {
-		int w = u8g2_GetStrWidth(&u8g2, s);
+		int w = u8g2_GetUTF8Width(&u8g2, s);
 		if (align_mode == CENTER) {
 			w /= 2;
 		}
 		x -= w;
 	}
-	u8g2_DrawStr(&u8g2, x, y, s);
+	u8g2_DrawUTF8(&u8g2, x, y, s);
 }
 
 void oled_draw_box(int x, int y, int w, int h) {
