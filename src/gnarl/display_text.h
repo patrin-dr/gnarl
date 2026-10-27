@@ -39,7 +39,11 @@
 #define S_PAIR_AGAIN		"Привяжите в AAPS"
 #define S_UNKNOWN_PHONE		"Чужой телефон"
 #define S_REJECTED		"отклонён"
+#ifdef BUTTON
 #define S_HOLD_TO_UNPAIR	"PRG 5 с: отвязать"
+#else
+#define S_HOLD_TO_UNPAIR	"RST x3: отвязать"
+#endif
 
 #else // English
 
@@ -67,7 +71,11 @@
 #define S_PAIR_AGAIN		"Pair again from AAPS"
 #define S_UNKNOWN_PHONE		"Unknown phone"
 #define S_REJECTED		"rejected"
+#ifdef BUTTON
 #define S_HOLD_TO_UNPAIR	"Hold PRG 5 s to unpair"
+#else
+#define S_HOLD_TO_UNPAIR	"Press RST 3x to unpair"
+#endif
 
 #endif // DISPLAY_LANG_RU
 

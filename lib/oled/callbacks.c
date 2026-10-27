@@ -75,14 +75,16 @@ static void oled_gpio_init(void) {
 #ifdef VEXT
 	oled_vext_on();
 #endif
+#ifdef OLED_RST
 	gpio_config_t conf = {
-		.pin_bit_mask = 1 << OLED_RST,
+		.pin_bit_mask = 1ULL << OLED_RST,
 		.mode         = GPIO_MODE_OUTPUT,
 		.pull_up_en   = GPIO_PULLUP_DISABLE,
 		.pull_down_en = GPIO_PULLDOWN_ENABLE,
 		.intr_type    = GPIO_INTR_DISABLE,
 	};
 	ESP_ERROR_CHECK(gpio_config(&conf));
+#endif
 }
 
 uint8_t gpio_and_delay_callback(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
@@ -91,7 +93,9 @@ uint8_t gpio_and_delay_callback(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void
 		oled_gpio_init();
 		break;
 	case U8X8_MSG_GPIO_RESET:
+#ifdef OLED_RST
 		gpio_set_level(OLED_RST, arg_int);
+#endif
 		break;
 	case U8X8_MSG_GPIO_CS:
 		break;

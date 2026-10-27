@@ -30,6 +30,11 @@
 // Comment out to get the upstream behaviour (any device may connect).
 #define BLE_LOCK_TO_PHONE
 #define BLE_UNPAIR_HOLD_MS	5000
+// Boards without a user button (LilyGO T3): forget the phone by pressing
+// RST BLE_UNPAIR_RESETS times in a row, each press within
+// BLE_UNPAIR_RESET_WINDOW_S seconds of the previous start-up.
+#define BLE_UNPAIR_RESETS		3
+#define BLE_UNPAIR_RESET_WINDOW_S	5
 // Disconnect a device that does not start encryption within this time,
 // so a stranger cannot keep the bridge's only advertising slot busy.
 #define BLE_PAIRING_TIMEOUT_S	30

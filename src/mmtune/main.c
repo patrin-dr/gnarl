@@ -99,7 +99,10 @@ void app_main(void) {
 
 	usleep(DISPLAY_TIMEOUT);
 
+#ifdef BUTTON
 	// Wake up on button press.
 	esp_sleep_enable_ext0_wakeup(BUTTON, 0);
+#endif
+	// Boards without a user button: press RST to scan again.
 	esp_deep_sleep_start();
 }

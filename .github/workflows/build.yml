@@ -76,6 +76,9 @@ jobs:
           python3 -m pip install --quiet pillow || true
           tools/screen_preview/run.sh ru out/ru
           tools/screen_preview/run.sh en out/en
+          # Boards without a user button show different unpair text.
+          tools/screen_preview/run.sh ru out/ru_t3 lilygo_t3_v161
+          tools/screen_preview/run.sh en out/en_t3 lilygo_t3_v161
 
       - name: Upload screen images
         if: always()

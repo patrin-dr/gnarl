@@ -39,7 +39,9 @@ static int battery_mv = -1;
 // a screen being shown then gives way early instead of blocking 5 s.
 static volatile bool urgent_pending;
 
+#ifdef BUTTON
 static TaskHandle_t button_task_handle;
+#endif
 
 // Keep the current screen on for `seconds`, or less if an urgent screen
 // is waiting (that one will redraw the display, so don't blank it).
@@ -127,6 +129,7 @@ static void display_loop(void *unused) {
 	}
 }
 
+#ifdef BUTTON
 static void button_interrupt(void *unused) {
 	display_command_t cmd = { .op = SHOW_STATUS };
 	xQueueSendFromISR(display_queue, &cmd, 0);
@@ -158,6 +161,7 @@ static void button_task(void *unused) {
 		ulTaskNotifyTake(pdTRUE, 0);
 	}
 }
+#endif // BUTTON
 
 void display_update(display_op_t op, int arg) {
 	display_command_t cmd = { .op = op, .arg = arg };
@@ -173,14 +177,18 @@ void display_init(void) {
 	oled_init();
 	display_queue = xQueueCreate(QUEUE_LENGTH, sizeof(display_command_t));
 	xTaskCreate(display_loop, "display", 3072, 0, 10, 0);
+#ifdef BUTTON
 	xTaskCreate(button_task, "button", 2048, 0, 5, &button_task_handle);
+#endif
 	// The boot screen (SHOW_SPLASH) is requested by app_main once
 	// Bluetooth is initialised, so that it can show the pairing state.
 
+#ifdef BUTTON
 	// Enable interrupt on button press.
 	gpio_set_direction(BUTTON, GPIO_MODE_INPUT);
 	gpio_set_intr_type(BUTTON, GPIO_INTR_NEGEDGE);
 	gpio_install_isr_service(0);
 	gpio_isr_handler_add(BUTTON, button_interrupt, 0);
 	gpio_intr_enable(BUTTON);
+#endif
 }

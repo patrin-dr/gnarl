@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <esp_bt.h>
+#include <esp_system.h>
 #include <esp_nimble_hci.h>
 #include <esp_timer.h>
 #include <host/ble_gap.h>
@@ -265,6 +266,59 @@ static void check_encrypted_peer(uint16_t conn_handle) {
 	ble_store_util_delete_peer(&desc.peer_id_addr);
 }
 #endif // BLE_LOCK_TO_PHONE
+
+#if defined(BLE_LOCK_TO_PHONE) && !defined(BUTTON)
+// No button to hold: count quick RST presses instead. Each start-up after
+// a reset increments a counter in NVS; it is cleared after
+// BLE_UNPAIR_RESET_WINDOW_S seconds of normal running.
+#define RESET_COUNT_KEY	"rst_cnt"
+
+static esp_timer_handle_t reset_count_timer;
+
+static void set_reset_count(uint8_t n) {
+	nvs_handle h;
+	if (nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+		return;
+	}
+	nvs_set_u8(h, RESET_COUNT_KEY, n);
+	nvs_commit(h);
+	nvs_close(h);
+}
+
+static void clear_reset_count(void *arg) {
+	set_reset_count(0);
+}
+
+static bool unpair_requested_by_resets(void) {
+	esp_reset_reason_t why = esp_reset_reason();
+	// RST (EN pin) and the power switch both report a power-on reset.
+	if (why != ESP_RST_POWERON && why != ESP_RST_EXT) {
+		set_reset_count(0);
+		return false;
+	}
+	uint8_t n = 0;
+	nvs_handle h;
+	if (nvs_open(STORAGE_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+		nvs_get_u8(h, RESET_COUNT_KEY, &n);
+		nvs_close(h);
+	}
+	n++;
+	if (n >= BLE_UNPAIR_RESETS) {
+		set_reset_count(0);
+		ESP_LOGW(TAG, "RST pressed %d times: forgetting the phone", n);
+		return true;
+	}
+	set_reset_count(n);
+	esp_timer_create_args_t t = {
+		.callback = clear_reset_count,
+		.name = "rst_cnt",
+	};
+	if (esp_timer_create(&t, &reset_count_timer) == ESP_OK) {
+		esp_timer_start_once(reset_count_timer, BLE_UNPAIR_RESET_WINDOW_S * 1000000ULL);
+	}
+	return false;
+}
+#endif
 
 ble_pairing_state_t ble_pairing_state(void) {
 #ifdef BLE_LOCK_TO_PHONE
@@ -760,6 +814,12 @@ void gnarl_init(void) {
 	assert(!err);
 
 	ble_store_config_init();
+#if defined(BLE_LOCK_TO_PHONE) && !defined(BUTTON)
+	if (unpair_requested_by_resets()) {
+		ble_forget_phone();
+		display_update(PHONE_UNPAIRED, 0);
+	}
+#endif
 
 	// Lower Bluetooth transmit power (see BLE_TX_POWER in module.h).
 	esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, BLE_TX_POWER);

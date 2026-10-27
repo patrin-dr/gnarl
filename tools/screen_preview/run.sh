@@ -1,13 +1,14 @@
 #!/bin/sh -e
 # Render all GNARL screens on a computer (needs a C compiler; Python with
 # Pillow optional, for PNG output). Usage, from the top-level directory:
-#   tools/screen_preview/run.sh [ru|en] [output-dir]
+#   tools/screen_preview/run.sh [ru|en] [output-dir] [board]
 lang=${1:-ru}
 out=${2:-screen_preview_$lang}
+board=${3:-heltec_v2}
 top=$(pwd)
 mkdir -p "$out/include"
 cp include/module.h "$out/include/module.h"
-printf '#include "boards/heltec_v2.h"\n' > "$out/include/board.h"
+printf '#include "boards/%s.h"\n' "$board" > "$out/include/board.h"
 if [ "$lang" = en ]; then
     sed -i.bak 's|^#define DISPLAY_LANG_RU|// #define DISPLAY_LANG_RU|' "$out/include/module.h"
 fi

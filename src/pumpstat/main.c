@@ -76,7 +76,10 @@ void app_main(void) {
 	get_pump_info();
 	display_info();
 	usleep(DISPLAY_TIMEOUT);
+#ifdef BUTTON
 	// Wake up on button press.
 	esp_sleep_enable_ext0_wakeup(BUTTON, 0);
+#endif
+	// Boards without a user button: press RST to read the pump again.
 	esp_deep_sleep_start();
 }

@@ -47,10 +47,13 @@ static void enter_low_battery_sleep(bool at_boot) {
 	gpio_hold_en(VEXT);
 	gpio_deep_sleep_hold_en();
 #endif
+#ifdef BUTTON
 	// Wake on PRG button (active low); keep the pin pulled up while asleep.
 	esp_sleep_enable_ext0_wakeup(BUTTON, 0);
 	rtc_gpio_pullup_en(BUTTON);
 	rtc_gpio_pulldown_dis(BUTTON);
+#endif
+	// Boards without a user button wake on the timer or on RST.
 	esp_sleep_enable_timer_wakeup(RECHECK_SLEEP_US);
 	low_battery_sleep = true;
 	ESP_LOGW(TAG, "entering deep sleep to protect the battery");
@@ -58,9 +61,11 @@ static void enter_low_battery_sleep(bool at_boot) {
 }
 
 void power_boot_check(void) {
+#ifdef BUTTON
 	// ext0 wake-up leaves the button pin routed to the RTC subsystem;
 	// return it to the digital GPIO matrix so its interrupt works again.
 	rtc_gpio_deinit(BUTTON);
+#endif
 #ifdef VEXT
 	// Release the hold applied before a low-battery deep sleep.
 	gpio_hold_dis(VEXT);
